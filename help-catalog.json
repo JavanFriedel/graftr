@@ -1,0 +1,1027 @@
+{
+  "schemaVersion": 1,
+  "overview": {
+    "intro": [
+      "graftr — prepare Git worktrees and development environments",
+      "Give each task its own checkout and environment; optionally publish URLs or attach Herdr.",
+      "Usage:\n  graftr <command> | graftr help <command>"
+    ],
+    "groups": [
+      {
+        "heading": "Start working",
+        "entries": [
+          [
+            "create",
+            "Create a worktree with its own environment and optional integrations"
+          ],
+          [
+            "adopt",
+            "Track an existing worktree without changing its setup"
+          ],
+          [
+            "list",
+            "List a project's worktrees and task IDs"
+          ],
+          [
+            "open",
+            "Reopen or prepare an existing managed worktree"
+          ],
+          [
+            "setup",
+            "Set up or retry setup in the current linked Git worktree"
+          ],
+          [
+            "env",
+            "Preview or explicitly refresh private development environment values"
+          ]
+        ]
+      },
+      {
+        "heading": "Inspect",
+        "entries": [
+          [
+            "status",
+            "Show all managed tasks and their setup results"
+          ],
+          [
+            "history",
+            "Summarize retained logs, backups and other historical state"
+          ],
+          [
+            "doctor",
+            "Diagnose a task's recorded resources without changing them"
+          ],
+          [
+            "health",
+            "Run a task's explicitly configured application checks"
+          ],
+          [
+            "logs",
+            "List a task's private installer and hook output logs"
+          ],
+          [
+            "label",
+            "Refresh the owned workspace label from its current Git branch"
+          ]
+        ]
+      },
+      {
+        "heading": "Finish and clean up",
+        "entries": [
+          [
+            "close",
+            "Clean up configured resources and close the optional workspace; keep files"
+          ],
+          [
+            "cleanup",
+            "Run recorded cleanup; keep the workspace and files"
+          ],
+          [
+            "remove",
+            "Delete a clean worktree folder; keep its Git branch"
+          ],
+          [
+            "nuke",
+            "Delete a clean worktree and its fully merged local branch"
+          ],
+          [
+            "reconcile",
+            "Clean up resources for managed workspaces that are no longer open"
+          ]
+        ]
+      },
+      {
+        "heading": "Maintenance",
+        "entries": [
+          [
+            "prune",
+            "Preview or delete old history, backups and logs from private state"
+          ],
+          [
+            "migrate",
+            "Convert retired built-in Tailscale profiles and records to hooks"
+          ],
+          [
+            "completion",
+            "Print a shell completion script for custom installations"
+          ],
+          [
+            "plugin",
+            "Install the bundled Graftr Herdr plugin"
+          ]
+        ]
+      },
+      {
+        "heading": "Store and return",
+        "entries": [
+          [
+            "freeze",
+            "Reclaim a clean checkout's disk space; retain a frozen recovery record"
+          ],
+          [
+            "frozen",
+            "List frozen tasks and unfinished freeze/thaw recovery"
+          ],
+          [
+            "thaw",
+            "Recreate a frozen checkout and prepare its environment"
+          ],
+          [
+            "schedule",
+            "Schedule, reschedule or cancel a frozen task's automatic return"
+          ]
+        ]
+      }
+    ],
+    "footer": "Examples: graftr create my-project fix-login | graftr list my-project\nNew here? Run 'graftr help getting-started'. Undo and recovery: 'graftr help recovery'.\nRun 'graftr <command> --help' for arguments, options, and examples."
+  },
+  "footer": "New to Graftr? Run 'graftr help getting-started'.",
+  "cliOptions": {
+    "base": {
+      "type": "string"
+    },
+    "branch": {
+      "type": "string"
+    },
+    "project": {
+      "type": "string"
+    },
+    "json": {
+      "type": "boolean"
+    },
+    "help": {
+      "type": "boolean",
+      "short": "h"
+    },
+    "no-setup": {
+      "type": "boolean"
+    },
+    "skip-install": {
+      "type": "boolean"
+    },
+    "install": {
+      "type": "boolean"
+    },
+    "wait": {
+      "type": "boolean"
+    },
+    "yes": {
+      "type": "boolean"
+    },
+    "live": {
+      "type": "boolean"
+    },
+    "latest": {
+      "type": "boolean"
+    },
+    "older-than": {
+      "type": "string"
+    },
+    "apply": {
+      "type": "boolean"
+    },
+    "take-baseline": {
+      "type": "string",
+      "multiple": true
+    },
+    "no-herdr": {
+      "type": "boolean"
+    },
+    "until": {
+      "type": "string"
+    },
+    "note": {
+      "type": "string"
+    },
+    "cancel": {
+      "type": "boolean"
+    },
+    "due": {
+      "type": "boolean"
+    },
+    "environment": {
+      "type": "boolean"
+    },
+    "hook": {
+      "type": "string",
+      "multiple": true
+    }
+  },
+  "topics": {
+    "getting-started": "graftr — getting started\n\nA Git worktree is a separate checkout of a repository on its own branch.\nGraftr prepares its environment and configured hooks; networking and Herdr are optional.\nYou start your own servers; Graftr does not manage them.\n\n1. Configure a project\n\n   You need Git. The native CLI needs no Bun, Node, Python or external flock.\n   Herdr is optional; automatic detection is the default. Standalone setup is synchronous.\n   Tailscale is optional: only a configured graftr hook tailscale publisher uses it.\n   For workspace integration, run from a Herdr pane in your main repository workspace.\n\n   Add a profile to ~/.config/graftr/projects.json, for example:\n\n   {\n      \"schemaVersion\": 2,\n      \"herdr\": \"auto\",\n     \"projects\": {\n       \"my-project\": {\n         \"repo\": \"/absolute/path/to/repo\",\n         \"worktreeRoot\": \"/absolute/path/to/worktrees/my-project\",\n         \"localPorts\": [3200, 3300],\n         \"envOverrides\": { \"PORT\": \"{{localPort}}\" }\n       }\n     }\n   }\n\n   Use your actual absolute paths. PROJECT is the profile name, not a folder path.\n   The top-level herdr setting can be omitted (auto), set to off to stay standalone,\n   or required to refuse unavailable Herdr. No command flag is normally needed.\n   XDG_CONFIG_HOME is honored; a former devtree config is reused until\n   graftr migrate --apply renames it. New native worktrees need autoSetup: true to enroll\n   automatically; explicit create/setup does not require it.\n\n2. Create your first task\n\n   graftr create my-project fix-login --wait\n   graftr list my-project\n\n    TASK is your short task name; by default its branch is task/fix-login and its task ID is\n    my-project--fix-login. Later commands also accept the folder name, branch,\n    or path; see graftr help targeting. list shows the existing full IDs.\n    Project branchName/worktreePath templates can change new branch/folder names,\n    not the task ID; see graftr help naming.\n   Outside Herdr setup finishes before returning. Inside Herdr use --wait or check status.\n\n3. Start working\n\n   Work in the printed checkout path; optionally use Herdr's shell tabs.\n   Install dependencies yourself, or configure an approved installCommand.\n   Run your app in a shell on its assigned local port. The profile above\n   exports PORT; adapt envOverrides for your app's actual configuration variables.\n    This local-only profile needs no Tailscale. Visit your app on localhost.\n    For optional publishing commands and a declared URL, see graftr help hooks.\n\n4. Pause or finish\n\n   graftr close my-project--fix-login\n   graftr open my-project--fix-login\n\n   close keeps the checkout; open prepares it again at the same path and URL.\n   To delete a finished checkout, use remove after saving your work. Its help\n   explains the confirmation and deletion safeguards.\n\nMore help:\n  graftr help create\n  graftr help setup\n  graftr help remove\n\nFull configuration and machine setup:\n  https://github.com/JavanFriedel/graftr/blob/main/README.md",
+    "recovery": "graftr — undo and recovery\n\nDiagnose first without changing resources:\n  graftr doctor my-project--fix-login\n  graftr doctor my-project--fix-login --live\nUnknown evidence is not absence; review conditional guidance before recovery.\n\nUnpublish and later restore a task's URL (cleanup hooks, then setup hooks):\n  graftr cleanup my-project--fix-login\n  graftr open my-project--fix-login\n\nInspect failed/interrupted cleanup before explicitly retrying cleanup/remove.\n\nClose a workspace, then reopen the same checkout and assigned URL:\n  graftr close my-project--fix-login\n  graftr open my-project--fix-login\n\nRemove a clean checkout but retain its branch, then resume committed work:\n  graftr remove my-project--fix-login\n  graftr create my-project fix-login --branch task/fix-login --wait\n\nUse the actual retained branch name from the removal result. This creates a new\ncheckout and environment; it cannot restore deleted ignored files or guarantee\nthe same ports. Existing branches must not be checked out or claimed elsewhere.\n\nFor deliberate permanent cleanup, nuke removes a clean checkout and its merged\nlocal branch after typed confirmation. There is no automatic undo and no force\noverride. Use remove if you might want to resume the branch later.\n\nSetup and installation are not general transactions: arbitrary installer side\neffects cannot be undone. Existing .env files and shell exports are not rewritten.\nIf preparation fails, keep the checkout, fix the reported issue, and retry setup.\n\nRead the action's help before running it:\n  graftr help cleanup\n  graftr help create\n  graftr help remove\n  graftr help nuke",
+    "targeting": "graftr — choosing a worktree\n\nTarget-taking commands accept an exact checkout folder name, exact Git branch,\nabsolute/relative directory path, or existing full PROJECT--TASK identifier:\n\n  graftr open fix-login\n  graftr open task/fix-login\n  graftr open ../worktrees/fix-login\n  graftr open my-project--fix-login\n  graftr open fix-login --project my-project\n\nShort names and branches use the current managed project as context. Outside a\nknown project, a short target must be unique across all managed projects. Use\n--project to select a project explicitly. Ambiguous matches are errors; Graftr\nnever picks the first result or performs fuzzy/prefix matching.\n\nAn existing full ID is authoritative. Explicit paths and full IDs can address\nanother project, unless --project restricts them. Path selection does not rename\nor move a checkout, rebind a branch, or enroll an unmanaged worktree.\n\nWithout a target, commands use the current managed directory (including nested\ndirectories), then the caller's owned Herdr workspace. @ requests the same behavior.\nNative Herdr plugin actions use their selected workspace, not their worker's cwd.\nNuke still requires an explicit target; @ and omitted targets are refused.\n\nExisting ownership, clean-Git and confirmation checks still apply after\nselection. A different branch in a recorded checkout must still be reviewed.\n\nBash command and target completion is installed by normal dotfiles setup.\nFor custom installations, graftr completion bash prints the same script.",
+    "output": "graftr — machine-readable output\n\nLifecycle and inspection commands accept --json for one versioned result on stdout:\n  graftr create my-project fix-login --wait --json\n  graftr open fix-login --json\n  graftr list my-project --json\n\nThe envelope has schemaVersion: 1, command, ok, outcome, data, error, and progress.\nThis schema version describes CLI output, not persisted task/setup schemas.\nPublic commands print human-readable summaries by default; use --json for agents\nand scripts. Tables adapt to terminal width, moving long columns below each row\nor stacking labeled fields without truncating values. Redirected output uses 80\ncolumns unless COLUMNS is set. list --json wraps its inventory in data.\nInteractive statuses use green for ready/thawed, yellow for closed/pending,\nblue for frozen and red for failures. Set NO_COLOR=1 to disable colors.\nRedirected output, TERM=dumb and --json stay plain; status words remain visible.\nUpdate consumers from .worktrees to .data.worktrees (and .project to .data.project).\n\noutcome:\n  completed  The requested action finished, including explicitly skipped setup.\n  queued     A worker accepted it; use data.logId and graftr status to follow it.\n  cancelled  Confirmation was declined; no lifecycle mutation was attempted.\n  failed     No tracked lifecycle mutation was attempted, or health checks failed.\n  partial    Setup is incomplete/unmanaged, or a mutation was attempted before failure.\n\nExit 0 and ok: true mean completed, queued, or cancelled. Exit 1 and ok: false\nmean failed or partial. Always check outcome; ok alone does not mean ready.\ncreate, setup, and open all fail for incomplete/unmanaged setup, including when\na plain checkout was retained. --no-setup remains an intentional successful skip.\n\ndata contains the command result, or null on an exception. Setup results retain\nstatus, step, dependencies, path/workspace, and available timing/log information.\nerror is null on success; otherwise it has code, message, phase, details, and\nrecovery guidance. Codes are coarse categories; do not parse message text.\n\nprogress lists ordered lifecycle stages attempted by this invocation, each with\naction, target, and status (completed or uncertain). Completed means the stage\nreturned, not that it changed anything or proves the current external state.\nUncertain means it threw: a timed-out request may still have taken effect.\nThis is not a rollback log; it excludes locks, timing history, and arbitrary\nproject-script effects. Never automatically undo or retry uncertain steps.\n\nJSON mode does not bypass confirmation, ownership, clean-Git, or merge checks.\nPrompts and optional diagnostics remain on stderr; stdout contains only the result.\nHelp takes precedence and remains text, even with --json. Completion output stays\na shell script; --json is not supported for completion or internal plugin commands.",
+    "naming": "graftr — creation paths and branch names\n\nProject profiles can customize new CLI worktrees without changing existing IDs:\n\n  \"worktreeRoot\": \"/absolute/path/to/worktrees\",\n  \"branchName\": \"feature/{{task}}\",\n  \"worktreePath\": \"{{project}}/{{branchSlug}}\",\n  \"workspaceLabel\": \"{{httpsPort}} {{taskName}}\"\n\ngraftr create my-project fix-login creates branch feature/fix-login at\n/absolute/path/to/worktrees/my-project/feature-fix-login. Its ID remains\nmy-project--fix-login; its workspace label still uses the assigned HTTPS port\nand the branch-derived task name with spaces.\n\nDefaults are branchName: task/{{task}} and worktreePath: {{task}}.\nBoth templates accept {{project}}, {{task}}, and {{repoName}} (main folder name).\nworktreePath also accepts {{branch}} (actual full branch, including slashes) and\n{{branchSlug}} (flattened ASCII letters/numbers/dots/underscores/hyphens; other runs become\nhyphens, repeated hyphens collapse, and edge dots/hyphens are trimmed).\nSlug conversion is lossy, not a unique ID: collisions fail, never pick a new suffix.\n\n--branch NAME uses an existing local branch instead of rendering branchName;\nworktreePath receives that actual branch. It never fetches or resets the branch.\nThe configured templates also apply to --no-setup. Missing/unreadable legacy\nconfiguration keeps its existing native fallback; explicit parsed creation settings\nmust be valid and never silently fall back to Herdr naming.\n\nworktreePath must be a normalized relative path beneath worktreeRoot; subdirectories\nare allowed. Absolute paths, traversal, Git metadata, symlinked destinations/parents,\nand occupied/claimed/overlapping checkout paths are refused before creation.\nRendered branches must pass Git's exact local branch validation.\nTemplates are text substitution only: no shell commands, environment lookups, or\nexpressions. Port/URL/workspace values do not exist at creation time.\n\nExisting managed tasks always reopen at their recorded branch/path. Changing the\ntemplates does not move/rename worktrees, change branches, migrate IDs, or reassign\nports/URLs. Native Herdr worktrees keep their chosen folder and branch. Remove and\ncreate --branch use the current path policy for a fresh checkout; deleted ignored\nfiles are not restored. Removal deletes only the checkout, not empty parent groups.\n\nFull configuration: docs/configuration.md (Creation naming templates).",
+    "hooks": "graftr — optional lifecycle hooks and networking\n\nApproved project profiles can declare one hooks object. afterEnvironment runs\nbefore tabs/install; afterDependencies runs before readiness; cleanup runs when\ncleaning up, closing or removing the task, including native Herdr post-events.\nretire runs only when the task is permanently removed (remove, nuke or native\nremoval), after its checkout is gone; it is recorded once and kept across\nclose/reopen, so it suits per-task resources such as databases.\n\n  \"hooks\": {\n    \"afterEnvironment\": [\n      { \"name\": \"report-preparing\", \"command\": [\"sh\", \"-c\", \"echo preparing\"] }\n    ],\n    \"afterDependencies\": [\n      { \"name\": \"generate\", \"command\": [\"pnpm\", \"run\", \"generate\"], \"timeoutMs\": 120000 }\n    ],\n    \"cleanup\": [\n      { \"name\": \"report-closed\", \"command\": [\"sh\", \"-c\", \"echo \\\"$GRAFTR_TASK_ID closed\\\"\"] }\n    ]\n  }\n\nEach phase allows up to 16 uniquely named hooks in array order. Names follow the\nusual lowercase/hyphen rules. Commands are literal argv arrays, not shell strings\nor templates; explicit sh -c allows shell/environment expansion without a helper file.\ntimeoutMs defaults to 60000 and must be an integer from 100 to 600000.\n\nOmit httpsPorts for local-only tasks. Optional httpsPorts reserves a secondary port;\nurl declares an HTTP(S) origin template, e.g. http://localhost:{{localPort}}.\nOptional \"ports\": { \"api\": [3600, 3700] } leases one extra named port per task,\nused as {{port.api}} in templates and GRAFTR_PORT_API in hooks.\nDeclaring a URL publishes nothing; a hook does. Existing tasks keep their recorded\naddresses; editing a profile does not reassign ports or URLs.\n\nPrivate Tailscale URLs use the built-in graftr hook tailscale publisher, which\nkeeps exact route ownership:\n\n  \"url\": \"https://your-machine.your-tailnet.ts.net:{{httpsPort}}\",\n  \"hooks\": {\n    \"afterDependencies\": [{ \"name\": \"publish-tailscale\", \"command\": [\"graftr\", \"hook\", \"tailscale\"] }],\n    \"cleanup\": [{ \"name\": \"cleanup-tailscale\", \"command\": [\"graftr\", \"hook\", \"tailscale\"] }]\n  }\n\nIt publishes https://HOST:HTTPS_PORT -> 127.0.0.1:LOCAL_PORT, never adopts or\noverwrites foreign/changed Serve configuration, and unpublishes only its own route.\n\nSetup hooks run in the verified checkout with inherited environment plus public task\noverrides and GRAFTR_PROJECT, GRAFTR_TASK_ID, GRAFTR_WORKTREE_PATH, GRAFTR_BRANCH,\nGRAFTR_LOCAL_PORT, GRAFTR_HTTPS_PORT, GRAFTR_PORT_<NAME>, GRAFTR_URL, GRAFTR_HOOK_PHASE, GRAFTR_HOOK_NAME,\nGRAFTR_DEPENDENCIES, GRAFTR_SETUP_RUN_ID, GRAFTR_TASK_SLUG (a resource-name-safe\nproject_folder identifier, also {{taskSlug}}) and, with a retire plan,\nGRAFTR_RETIRE_RUN_ID. GRAFTR_* context wins over inherited\nor configured assignments; unconfigured optional addresses are omitted, not invented.\nGraftr does not source .env into the hook process.\nafterEnvironment reports dependencies as pending; it cannot assume an installer\nhas run. afterDependencies runs even when dependencies are skipped/not configured.\n\nCommands run serially outside the shared registry lock, with stdin closed and\noutput saved to a private run log (graftr logs). Timeouts terminate only the hook's owned process group. Hooks\nmust be finite/idempotent: they run again on a new setup/open/retry attempt.\nThey are trusted code, not a sandbox or an exactly-once transaction. A restarted\ninterrupted worker can rerun earlier hooks; detached descendants are not contained.\n\nFailure stops later hooks/readiness and retains the checkout/records/leases.\ndata.hooks and setup receipts show name, phase, observed status, duration and safe\nfailure reason, never argv/output. A cancelled active hook may finish its own side\neffects, but its stale worker cannot run later hooks or publish success.\nrunning is the last observation, not proof a process is still alive.\nReview status and fix the issue, then retry setup; arbitrary effects are not undone.\n\nCleanup commands/public context are recorded before provisioning, and cannot be\nretargeted by editing the profile while armed. Cleanup waits for active setup and runs\noutside the deleted checkout in private scratch space, under its checkout-operation\nlock, never the registry lock. Use PATH/absolute executables and recorded context,\nnot checkout-relative scripts. GRAFTR_CLEANUP_RUN_ID identifies this provisioning generation\nduring both setup and cleanup; retries preserve it until cleanup completes.\nSuccessful cleanup commands are skipped until the next setup arms a new generation.\nFailed/interrupted cleanup retains ownership/leases; automatic events refuse replay.\nInspect effects before explicitly retrying cleanup/remove. No arbitrary effects are undone.\nStatus redacts recorded argv/context. Hooks must supply their own external ownership checks.\n\nConfiguration, Git branch/ownership, environment, and dependency validity are\nrechecked. Hooks cannot silently switch the recorded branch or invalidate managed\nassignments/install inputs and still publish ready. No setup hooks run for --no-setup,\nunmanaged fallback. Graftr retains the removal handoff/safeguards.\nProfiles/records from the retired built-in Tailscale mode must be converted once with\ngraftr migrate (preview) and graftr migrate --apply; see graftr help migrate.\n\nFull configuration: docs/hooks.md (Unified lifecycle hooks)."
+  },
+  "pages": {
+    "adopt": {
+      "summary": "Track an existing worktree without changing its setup",
+      "usage": "[PATH] [options]",
+      "arguments": [
+        [
+          "PATH",
+          "Linked Git worktree directory; defaults to the current checkout."
+        ]
+      ],
+      "options": [
+        [
+          "--install",
+          "Explicitly run the project's dependency installer."
+        ],
+        [
+          "--environment",
+          "Preview a baseline refresh of an existing private .env; values stay hidden."
+        ],
+        [
+          "--apply",
+          "Apply the environment preview; back up first and preserve existing differences."
+        ],
+        [
+          "--take-baseline KEY",
+          "Explicitly replace a differing non-address key; repeat for more keys."
+        ],
+        [
+          "--hook PHASE/NAME",
+          "Explicitly run one configured setup hook; repeat to select others."
+        ],
+        [
+          "--project PROJECT",
+          "Limit the target to this configured project."
+        ],
+        [
+          "--json",
+          "Print a versioned result envelope; see graftr help output."
+        ],
+        [
+          "-h, --help",
+          "Show help for this command."
+        ]
+      ],
+      "examples": [
+        "graftr adopt /path/to/worktree",
+        "graftr adopt . --install",
+        "graftr adopt . --environment",
+        "graftr adopt . --environment --apply",
+        "graftr adopt . --hook afterDependencies/check"
+      ],
+      "notes": "Default adoption registers the existing path/branch and observes an existing\nHerdr attachment and public PORT/BASE_URL from an owner-written root .env when available.\nNo port allocation, environment writes, installers, hooks, workspace creation or\nrenaming occurs. Dirty work is allowed and never stashed or committed.\nSetup is external, not verified by Graftr. Unknown addresses stay unassigned.\nRepeated default adoption is a no-op, including after a failed selected stage.\n\nStages are independent, synchronous and opt-in on each invocation. Order is environment,\nafterEnvironment hooks, installation, then afterDependencies hooks. Hook names alone\nare accepted only when unambiguous. No cleanup/retire hooks are armed. Built-in\nTailscale/Postgres publishers require provisioned ownership and cannot be run here;\nmanual routes/databases are never claimed, changed or deleted by adoption.\n\n--environment without --apply is fully read-only, including the registry. It requires\nan existing private untracked .env and an approved separate .env baseline. Preview\nfirst; --apply adds missing non-address keys and only replaces keys explicitly\nselected with --take-baseline. Existing public port/URL assignments are protected.\nSecret-bearing backups stay outside Git. Existing shell environments are not restarted.\nInstallers and selected hooks can have arbitrary effects; private logs and stage\nresults survive failures. Nothing is automatically retried or rolled back.\n\nAdopted worktrees appear in status/list and support logs/doctor. Automatic setup,\nopen/close/cleanup/removal/freeze operations remain disabled for external setup;\nmanage the workspace and Git checkout directly. Adoption is tracking, not implicit\nconversion to Graftr-provisioned service ownership.",
+      "targetNote": null
+    },
+    "plugin": {
+      "summary": "Install the bundled Graftr Herdr plugin",
+      "usage": "install [options]",
+      "examples": [
+        "graftr plugin install",
+        "graftr plugin install --json"
+      ],
+      "notes": "One plugin provides normal worktree actions and worktree.created/opened,\nworkspace.closed and worktree.removed event hooks. Its startup worker reconciles\nowned workspaces and thaws overdue scheduled tasks for that exact Herdr server.\nStartup thawing is enabled by default. Set top-level \"startupThaw\": false in\nprojects.json to disable only the startup return check, not per-task timers.\nThere are no plugin targets or install-time behavior flags.\nStartup hooks run on future server starts/handoffs, not client attachment or reload.\n\nWrites a private managed manifest under $XDG_DATA_HOME/graftr/plugin (normally\n~/.local/share/graftr/plugin), then runs herdr plugin link to enable it for this\nuser across sessions. Reinstalling refreshes the bundled copy; no source checkout,\nnetwork download, sudo, project configuration or running Herdr server is required.\nHerdr's CLI must be on PATH. This does not install Graftr or Herdr executables;\nGraftr must remain available as graftr on Herdr's PATH.\nDoes not thaw tasks, create timers, run reconciliation or restart Herdr.\nInspect registrations with herdr plugin list. To unregister without deleting files:\nherdr plugin unlink local.graftr.\nFor editable development links, use herdr plugin link /path/to/plugin instead.",
+      "options": [
+        [
+          "--json",
+          "Print a versioned result envelope; see graftr help output."
+        ],
+        [
+          "-h, --help",
+          "Show help for this command."
+        ]
+      ],
+      "targetNote": null
+    },
+    "freeze": {
+      "summary": "Reclaim a clean checkout's disk space; retain a frozen recovery record",
+      "usage": "[TARGET] [options]",
+      "options": [
+        [
+          "--yes",
+          "Skip confirmation only; all clean-Git and ownership checks remain."
+        ],
+        [
+          "--until TIMESTAMP",
+          "Opt into a persistent one-off systemd user timer to thaw at this ISO timestamp."
+        ],
+        [
+          "--note TEXT",
+          "Leave a single-line note for the welcome-back pane (no secrets)."
+        ],
+        [
+          "--project PROJECT",
+          "Limit the target to this configured project."
+        ],
+        [
+          "--json",
+          "Print a versioned result envelope; see graftr help output."
+        ],
+        [
+          "-h, --help",
+          "Show help for this command."
+        ]
+      ],
+      "examples": [
+        "graftr freeze fix-login",
+        "graftr freeze fix-login --until 2026-11-06T09:00:00-05:00 --note \"Retry after upstream release\""
+      ],
+      "notes": "Deletes the checkout, including ignored .env, dependencies and caches. Keeps\nthe observed local branch/commit and a private recovery record, not a backup.\nRuns cleanup AND retire hooks; configured task databases may be deleted too.\nSave valuable ignored files first. Dirty/untracked work blocks freezing.\nReleases ports; thaw regenerates the environment from current configuration.\nUse graftr frozen to find stored tasks and graftr thaw TARGET to return.\nFrom inside Herdr, an independent worker finishes after the caller's pane closes;\na freezing response means accepted, not completed. Inspect frozen/status elsewhere.\n\nScheduling is optional, Linux-only and requires a recorded Herdr attachment plus\na reachable systemd user manager. Dates require an explicit ISO timezone; natural\nlanguage dates are not accepted. Persistent per-task unit files survive reboot.\nUnavailable Herdr/parent workspaces defer to one-off retries (5 minutes up to 6 hours).\nSetup/installer/hook failures require manual review, not automatic replay.\nNo scheduler is contacted for an unscheduled freeze. See docs/freezing.md.",
+      "targetNote": "TARGET accepts a checkout name, branch, path, or full ID. See 'graftr help targeting'."
+    },
+    "frozen": {
+      "summary": "List frozen tasks and unfinished freeze/thaw recovery",
+      "usage": "[PROJECT] [options]",
+      "examples": [
+        "graftr frozen",
+        "graftr frozen my-project --json"
+      ],
+      "notes": "Read-only. Frozen records have no port leases and are not expired by prune. Completed thaws leave the frozen listing; status shows their active tasks.",
+      "options": [
+        [
+          "--json",
+          "Print a versioned result envelope; see graftr help output."
+        ],
+        [
+          "-h, --help",
+          "Show help for this command."
+        ]
+      ],
+      "targetNote": null
+    },
+    "thaw": {
+      "summary": "Recreate a frozen checkout and prepare its environment",
+      "usage": "TARGET [options] | --due",
+      "options": [
+        [
+          "--no-herdr",
+          "Thaw manually and synchronously without opening a workspace."
+        ],
+        [
+          "--due",
+          "Check overdue scheduled tasks for this exact Herdr server."
+        ],
+        [
+          "--project PROJECT",
+          "Limit the target to this configured project."
+        ],
+        [
+          "--json",
+          "Print a versioned result envelope; see graftr help output."
+        ],
+        [
+          "-h, --help",
+          "Show help for this command."
+        ]
+      ],
+      "examples": [
+        "graftr thaw my-project--fix-login",
+        "graftr thaw fix-login --no-herdr",
+        "graftr thaw --due"
+      ],
+      "notes": "Requires an explicit frozen target (full ID, branch, former folder or path).\nKeeps the recorded path/branch, allocates new available ports, regenerates .env\nand reinstalls dependencies unless installation was explicitly skipped before freeze.\nNever resets a missing/moved branch, adopts another checkout or restores ignored files.\nCancels its scheduled timer before setup. Preparation is synchronous; failures keep\nthe checkout and recovery state for explicit review/retry, not automatic replay.\nAttached tasks reopen without stealing focus and receive a welcome-back tab in the\nfirst position, explaining the return date, note and setup result. Existing selection\nis preserved. No dev server is started.\n\n--due never returns unscheduled/future tasks or another server's tasks.\nThe Graftr plugin checks overdue returns at startup by default. Set top-level\n\"startupThaw\": false in projects.json to disable that startup check; an explicit\nthaw --due and per-task timers still work. Install with graftr plugin install.\nNo always-running Graftr daemon or periodic polling. See docs/freezing.md.",
+      "targetNote": "TARGET selects a frozen task by former folder, branch, path or full ID. Use graftr frozen to find it."
+    },
+    "schedule": {
+      "summary": "Schedule, reschedule or cancel a frozen task's automatic return",
+      "usage": "TARGET --until TIMESTAMP | TARGET --cancel",
+      "options": [
+        [
+          "--until TIMESTAMP",
+          "Future ISO timestamp with timezone; installs a persistent per-task user timer."
+        ],
+        [
+          "--cancel",
+          "Cancel automatic return; leave the task frozen."
+        ],
+        [
+          "--project PROJECT",
+          "Limit the target to this configured project."
+        ],
+        [
+          "--json",
+          "Print a versioned result envelope; see graftr help output."
+        ],
+        [
+          "-h, --help",
+          "Show help for this command."
+        ]
+      ],
+      "examples": [
+        "graftr schedule fix-login --until 2026-11-06T09:00:00-05:00",
+        "graftr schedule fix-login --cancel"
+      ],
+      "notes": "Requires a fully frozen task with a recorded Herdr server. Only scheduling\nuses systemd; manual freeze/thaw does not require it. Unit files are private and\nstored in $XDG_CONFIG_HOME/systemd/user (normally ~/.config/systemd/user).\nThey invoke this Graftr executable/source entrypoint with explicit config/state paths\nand the scheduling shell's PATH, not its secrets or other environment variables.\nReboots preserve the schedule; missed returns run when the user manager starts.\nNo root service, lingering or waking the computer is enabled. Late is possible.\nCancelling/rescheduling fences stale workers. Inspect graftr frozen for retry/error\nstate and systemctl --user list-timers for installed timers.",
+      "targetNote": "TARGET selects a frozen task by former folder, branch, path or full ID. Use graftr frozen to find it."
+    },
+    "create": {
+      "summary": "Create a worktree with its own environment and optional integrations",
+      "usage": "PROJECT TASK [options]",
+      "arguments": [
+        [
+          "PROJECT",
+          "A project name from your Graftr configuration."
+        ],
+        [
+          "TASK",
+          "A short name using lowercase letters, numbers, and single hyphens."
+        ]
+      ],
+      "options": [
+        [
+          "--base REF",
+          "Branch or commit to start from; defaults to the repository's HEAD."
+        ],
+        [
+          "--no-herdr",
+          "Override configuration and use standalone preparation for this command."
+        ],
+        [
+          "--branch NAME",
+          "Check out an existing local branch instead of creating the configured branch."
+        ],
+        [
+          "--wait",
+          "Wait for setup to finish instead of queuing it in Herdr."
+        ],
+        [
+          "--skip-install",
+          "Prepare the worktree without installing dependencies."
+        ],
+        [
+          "--no-setup",
+          "Create only the checkout (and optional workspace); skip managed setup."
+        ],
+        [
+          "--json",
+          "Print a versioned result envelope; see graftr help output."
+        ],
+        [
+          "-h, --help",
+          "Show help for this command."
+        ]
+      ],
+      "examples": [
+        "graftr create my-project fix-login",
+        "graftr create my-project fix-login --base main --wait",
+        "graftr create my-project fix-login --branch task/fix-login --wait"
+      ],
+      "notes": "Works from a plain terminal with Git and a configured project; Herdr is optional.\nThe top-level herdr setting in projects.json is auto (default), off, or required.\nauto checks the contextual connection before mutation; missing/unreachable Herdr\nselects standalone preparation. No Herdr executable is needed for that fallback.\noff always selects standalone; required refuses missing/unreachable Herdr.\nWithout attachment (or with --no-herdr), create and setup finish synchronously without\na socket, workspace, tabs, notification, plugin, or background runner. Inside Herdr,\nthe existing workspace integration and default background setup remain available.\nOwnership, permission and invalid-response errors remain errors. There is no fallback\nafter workspace changes begin, even if the reply is lost; inspect before retrying.\nCreates the configured branch (default task/TASK) from committed code,\nnot uncommitted changes. Project branchName/worktreePath templates customize new\nbranches and paths beneath worktreeRoot; see graftr help naming.\nProject and task names are limited to 48 characters each.\n--branch requires an existing, unused local branch. It never fetches, resets,\nor force-checks out a branch; choose either --branch or --base, not both.\nAfter remove, use --branch to resume committed work in a fresh checkout.\nDeleted ignored files are not restored, and new port assignments may differ.\n\nHerdr-integrated setup runs in the background by default. Check graftr status for completion.\nThe configured installer may run, but you start your own development servers.\n--skip-install persists until you run graftr setup --install.\nRepeating create for an existing task reuses its recorded branch, checkout, and\nassignments, even after naming templates change. Native Herdr names are retained.",
+      "targetNote": null
+    },
+    "setup": {
+      "summary": "Set up or retry setup in the current linked Git worktree",
+      "usage": "[options]",
+      "options": [
+        [
+          "--wait",
+          "Wait for setup to finish instead of queuing it in Herdr."
+        ],
+        [
+          "--skip-install",
+          "Skip dependency installation until --install is requested."
+        ],
+        [
+          "--install",
+          "Run the configured installer again and clear the persistent skip."
+        ],
+        [
+          "--no-herdr",
+          "Prepare the current checkout synchronously without Herdr attachment or calls."
+        ],
+        [
+          "--json",
+          "Print a versioned result envelope; see graftr help output."
+        ],
+        [
+          "-h, --help",
+          "Show help for this command."
+        ]
+      ],
+      "examples": [
+        "graftr setup",
+        "graftr setup --wait",
+        "graftr setup --install --wait"
+      ],
+      "notes": "Run inside the linked Git worktree you want to prepare; this takes no task ID.\nThe top-level projects.json herdr mode defaults to auto: use a reachable contextual\nHerdr connection, otherwise prepare the canonical checkout synchronously.\noff selects standalone; required refuses unavailable Herdr. Plugin actions always\nrequire their selected workspace and never fall back to the worker's directory.\n--no-herdr selects the local preparation path without discarding a known attachment.\nThe checkout must belong to a configured project. Setup prepares the declared\nenvironment, optional Herdr shell tabs, dependencies, and configured hooks, not a server.\nPublishing (for example a Tailscale URL) is a configured hook; see graftr help hooks.\n\nExisting environment files and shell exports are not overwritten. If declared\nassignments differ, review the worktree's .env before retrying.\nChoose either --install or --skip-install, not both.",
+      "targetNote": null
+    },
+    "open": {
+      "summary": "Reopen or prepare an existing managed worktree",
+      "usage": "[TARGET] [options]",
+      "arguments": [
+        [
+          "TARGET",
+          "Managed worktree; omit in its directory or owned Herdr workspace."
+        ]
+      ],
+      "options": [
+        [
+          "--wait",
+          "Wait for setup to finish instead of queuing it in Herdr."
+        ],
+        [
+          "--no-herdr",
+          "Prepare synchronously without opening or contacting a Herdr workspace."
+        ],
+        [
+          "--project PROJECT",
+          "Limit the target to this configured project."
+        ],
+        [
+          "--json",
+          "Print a versioned result envelope; see graftr help output."
+        ],
+        [
+          "-h, --help",
+          "Show help for this command."
+        ]
+      ],
+      "examples": [
+        "graftr open fix-login",
+        "graftr open task/fix-login --wait",
+        "graftr open fix-login --project my-project"
+      ],
+      "notes": "Preserves the checkout, branch, environment file, and assigned ports/optional URL.\nRestores missing shell tabs and reruns provisioning hooks, including any publisher.\nFinish outstanding failed/interrupted cleanup before provisioning again.\nThe top-level projects.json herdr mode defaults to auto; missing/unreachable contextual\nHerdr selects synchronous local preparation. off selects standalone, required refuses\nunavailable Herdr, and --no-herdr overrides configuration for this invocation.\nWith Herdr available, an unattached standalone checkout opens/attaches at the\nsame path with the same ID, environment, receipt and leases; no second checkout.\nFallback never clears a known attachment or retries an uncertain workspace mutation.\nHerdr setup runs in the background by default; inspect graftr status for completion.",
+      "targetNote": "TARGET accepts a checkout name, branch, path, or full ID. See 'graftr help targeting'."
+    },
+    "list": {
+      "summary": "List a project's worktrees and task IDs",
+      "usage": "PROJECT [options]",
+      "arguments": [
+        [
+          "PROJECT",
+          "A project name from your Graftr configuration."
+        ]
+      ],
+      "examples": [
+        "graftr list my-project",
+        "graftr list my-project --json"
+      ],
+      "notes": "Includes the main checkout, managed tasks, adopted external worktrees, and unmanaged Git worktrees.\nCompare setup status with lifecycle state; a folder alone is not proof\nthat setup finished. Listing never probes servers or removes files.",
+      "options": [
+        [
+          "--json",
+          "Print a versioned result envelope; see graftr help output."
+        ],
+        [
+          "-h, --help",
+          "Show help for this command."
+        ]
+      ],
+      "targetNote": null
+    },
+    "status": {
+      "summary": "Show all managed tasks and their setup results",
+      "usage": "[options]",
+      "examples": [
+        "graftr status",
+        "graftr status --json"
+      ],
+      "notes": "Shows a readable overview of managed worktrees, setup state and addresses,\nplus frozen work, scheduled returns, retries and recovery messages across projects.\nAdopted worktrees show adopted/external; no setup success or unknown address is invented.\nProject and task names have separate columns; full PROJECT--TASK IDs still work\nas command selectors and remain unchanged in JSON output.\nRetained logs and backups are reported separately by graftr history.\nUse --json for full task records, setup receipts, dependency results, recorded timings\nand retained-history details in the versioned result envelope.\nCleanup summaries never include recorded argv or environment context.\nHuman STATE labels include prepared, closed and resources cleaned;\nSETUP completed means the configured setup finished, not that a server is running.\nDependency installation may be explicitly skipped or not configured.\nPending means setup is queued or running. JSON retains the existing status values.\nThis is recorded state, not a live application health check.",
+      "options": [
+        [
+          "--json",
+          "Print a versioned result envelope; see graftr help output."
+        ],
+        [
+          "-h, --help",
+          "Show help for this command."
+        ]
+      ],
+      "targetNote": null
+    },
+    "history": {
+      "summary": "Summarize retained logs, backups and other historical state",
+      "usage": "[options]",
+      "examples": [
+        "graftr history",
+        "graftr history --json"
+      ],
+      "notes": "Shows nonempty categories with entry counts, disk sizes and oldest dates.\nReads file metadata only; does not display backup contents, probe services or delete\nanything. This is retained storage, not a chronological command audit log.\nCounts do not mean every entry is safe to delete; use graftr prune to preview cleanup.\nUse --json for category/count/bytes/oldest records under data.retained.",
+      "options": [
+        [
+          "--json",
+          "Print a versioned result envelope; see graftr help output."
+        ],
+        [
+          "-h, --help",
+          "Show help for this command."
+        ]
+      ],
+      "targetNote": null
+    },
+    "env": {
+      "summary": "Preview or explicitly refresh private development environment values",
+      "usage": "refresh [TARGET] [options]",
+      "arguments": [
+        [
+          "refresh",
+          "Compare the approved development baseline with this task's existing .env."
+        ],
+        [
+          "TARGET",
+          "Managed worktree; omit inside its directory. No Herdr inference."
+        ]
+      ],
+      "options": [
+        [
+          "--apply",
+          "Add missing baseline keys; save a private recovery backup before any change."
+        ],
+        [
+          "--take-baseline KEY",
+          "Explicitly select an existing differing key to replace; repeat for more keys. Preview-only without --apply."
+        ],
+        [
+          "--project PROJECT",
+          "Limit the target to this configured project."
+        ],
+        [
+          "--json",
+          "Print a versioned result envelope; see graftr help output."
+        ],
+        [
+          "-h, --help",
+          "Show help for this command."
+        ]
+      ],
+      "examples": [
+        "graftr env refresh fix-login",
+        "graftr env refresh fix-login --apply",
+        "graftr env refresh fix-login --take-baseline EXAMPLE_SECRET --apply --json"
+      ],
+      "notes": "Preview is read-only and prints key names/statuses/actions, never values or hashes.\nWithout historical baseline evidence, different values may be local edits or baseline\nchanges. Missing keys may also be deliberate omissions: review the preview first.\n--apply adds missing keys only; --take-baseline explicitly authorizes selected\nreplacements. Existing/local-only keys are never removed. Fixed managed port/URL\nassignments cannot be selected or changed; profile assignment drift must be reviewed.\n\nBoth files must be private owned regular files at canonical non-symlink paths,\nat most 4 MiB, with supported unambiguous dotenv syntax. Missing or tracked target\n.env files, changed Git ownership and pending setup are refused. Preparing tasks\nneed an incomplete receipt; apply also refuses an active per-checkout setup lock.\nNo remote services, project parsers, installers, hooks, health checks or servers run.\n\nApply saves exact original bytes under the private state directory's env-backups\n(outside Git), then rechecks inputs and atomically replaces .env. Existing bytes,\ncomments and assignments remain as a prefix; selected baseline assignments are\nappended with last-value-wins semantics. Backup files contain secrets: keep them\nprivate and review/remove them deliberately; they survive remove/nuke and are not\nautomatically expired.\nNo baseline-provenance/history database or secret hashes are created.\n\nStop external editors/writers before apply. Graftr locks serialize its own operations,\nnot arbitrary file writers; there is no atomic transaction across backup and .env.\nInterrupted/failed apply may leave only a backup or an already-replaced file; review\nprogress, the backup and current .env privately rather than automatically retrying.\nNo automatic rollback or restart: existing shells and applications retain old values.\n\nExit 0 means preview/apply completed, not that every difference was resolved.\ndata.reviewRequired identifies differing values deliberately preserved. Errors use\nthe normal failed/partial JSON envelope; no environment contents are logged.",
+      "targetNote": "TARGET accepts a checkout name, branch, path, or full ID. See 'graftr help targeting'."
+    },
+    "doctor": {
+      "summary": "Diagnose a task's recorded resources without changing them",
+      "usage": "[TARGET] [options]",
+      "arguments": [
+        [
+          "TARGET",
+          "Managed worktree; omit in its directory, or owned Herdr workspace with --live."
+        ]
+      ],
+      "options": [
+        [
+          "--live",
+          "Also read workspace inventory from the recorded Herdr server."
+        ],
+        [
+          "--project PROJECT",
+          "Limit the target to this configured project."
+        ],
+        [
+          "--json",
+          "Print a versioned result envelope; see graftr help output."
+        ],
+        [
+          "-h, --help",
+          "Show help for this command."
+        ]
+      ],
+      "examples": [
+        "graftr doctor fix-login",
+        "graftr doctor --live",
+        "graftr doctor my-project--fix-login --live --json"
+      ],
+      "notes": "Local mode checks checkout/Git registration/branch, ownership records/profile,\nand the last setup receipt. It never contacts Herdr, even to select a target:\nprovide a target or run inside its managed directory.\n--live also reads the recorded Herdr server. External effects of hooks, such as a\npublished Tailscale route, are not verified.\nExternal reads have bounded transport/subprocess timeouts; outages are unknown,\nnot missing resources. Pending receipts do not prove a worker is still running.\n\nFindings are ok, attention, unknown, or not-checked. Exit 0 means all requested\nobservations agree; exit 1 means attention or unknown evidence. With --json,\ndata retains the report on diagnostic failure, outcome is failed (not partial),\nerror is DOCTOR_ATTENTION or DOCTOR_INCOMPLETE, and progress stays empty.\ncomplete covers requested observations only; local mode leaves live checks unchecked.\n\nNo repair, locks/record/lease writes, environment-file reads, project commands,\nhealth checks, application probes, or automatic retry. A ready receipt is historical\nevidence, not current environment/dependency/application verification. Reports are\npoint-in-time observations, not atomic snapshots. Review conditional next steps\nbefore deliberately using setup/open/cleanup; preserve uncertain effects.",
+      "targetNote": "TARGET accepts a checkout name, branch, path, or full ID. See 'graftr help targeting'."
+    },
+    "health": {
+      "summary": "Run a task's explicitly configured application checks",
+      "usage": "[TARGET] [options]",
+      "arguments": [
+        [
+          "TARGET",
+          "Managed worktree; omit in its directory or owned Herdr workspace."
+        ]
+      ],
+      "examples": [
+        "graftr health my-project--fix-login",
+        "graftr health"
+      ],
+      "notes": "Runs only the project's approved healthChecks and prints a readable report.\nUse --json for the full structured result.\nHTTP/TCP checks use the assigned local port, not a published URL.\nWith a directory or explicit target, a live Herdr connection is not required.\n\nNo configured checks reports not-configured, not unhealthy. Exit status is\nnonzero for unhealthy results or invalid requests. This never starts servers,\nchanges lifecycle records, or schedules recurring checks.",
+      "options": [
+        [
+          "--project PROJECT",
+          "Limit the target to this configured project."
+        ],
+        [
+          "--json",
+          "Print a versioned result envelope; see graftr help output."
+        ],
+        [
+          "-h, --help",
+          "Show help for this command."
+        ]
+      ],
+      "targetNote": "TARGET accepts a checkout name, branch, path, or full ID. See 'graftr help targeting'."
+    },
+    "close": {
+      "summary": "Clean up configured resources and close the optional workspace; keep files",
+      "usage": "[TARGET] [options]",
+      "arguments": [
+        [
+          "TARGET",
+          "Managed worktree; omit in its directory or owned Herdr workspace."
+        ]
+      ],
+      "examples": [
+        "graftr close",
+        "graftr close my-project--fix-login"
+      ],
+      "notes": "Runs recorded cleanup hooks (for example unpublishing a URL) and closes\nany attached Herdr workspace/panes. Cleanup waits for active setup outside the registry lock.\nKeeps files, the branch, and port assignments so graftr open can restore it.\nUnattached tasks need no Herdr connection. Detached or external servers are not stopped.\n\nClosing from inside an attached workspace hands off to Herdr's independent worker. A closing receipt\nmeans accepted, not completed; inspect graftr status from another workspace.\nHerdr's own native close is separate: its post-event hook records closure before\nauxiliary cleanup. A cleanup failure retains ownership and is reported in the plugin\nlog without changing the already-completed native operation.",
+      "options": [
+        [
+          "--project PROJECT",
+          "Limit the target to this configured project."
+        ],
+        [
+          "--json",
+          "Print a versioned result envelope; see graftr help output."
+        ],
+        [
+          "-h, --help",
+          "Show help for this command."
+        ]
+      ],
+      "targetNote": "TARGET accepts a checkout name, branch, path, or full ID. See 'graftr help targeting'."
+    },
+    "cleanup": {
+      "summary": "Run recorded cleanup; keep the workspace and files",
+      "usage": "[TARGET] [options]",
+      "arguments": [
+        [
+          "TARGET",
+          "Managed worktree; omit in its directory or owned Herdr workspace."
+        ]
+      ],
+      "examples": [
+        "graftr cleanup",
+        "graftr cleanup my-project--fix-login"
+      ],
+      "notes": "Cancels/fences setup, waits for active setup, and runs recorded cleanup hooks\noutside the checkout and registry lock, such as a configured publisher's cleanup.\nKeeps the Herdr workspace, checkout, branch, port assignments, and servers.\nUse open/setup to reprovision.\nSuccessful cleanup commands are skipped on retry. After failed/interrupted cleanup,\ninspect effects before explicitly retrying; automatic events never blindly replay it.\nFailures retain ownership/leases.",
+      "options": [
+        [
+          "--project PROJECT",
+          "Limit the target to this configured project."
+        ],
+        [
+          "--json",
+          "Print a versioned result envelope; see graftr help output."
+        ],
+        [
+          "-h, --help",
+          "Show help for this command."
+        ]
+      ],
+      "targetNote": "TARGET accepts a checkout name, branch, path, or full ID. See 'graftr help targeting'."
+    },
+    "label": {
+      "summary": "Refresh the owned workspace label from its current Git branch",
+      "usage": "[TARGET] [options]",
+      "arguments": [
+        [
+          "TARGET",
+          "Managed checkout; omit inside its directory or owned Herdr workspace."
+        ]
+      ],
+      "examples": [
+        "graftr label",
+        "graftr label fix-login",
+        "graftr label my-project--fix-login --json"
+      ],
+      "notes": "Updates only the live owned Herdr workspace's display label using its current\nattached branch and the project's workspaceLabel template. Defaults use the secondary\nport prefix when assigned, otherwise the local port. Dirty work is allowed; detached/unregistered/foreign checkouts and\nambiguous workspace ownership are refused. It requires a Herdr attachment and will\nnot open a closed workspace.\n\nNo setup, environment reads/writes, install, hooks, Git rename/move, aliases,\nor ownership-record changes. Active/pending setup is refused. Other commands retain\ntheir recorded-branch checks; refreshing the label does not rebind the task.\nTarget with the folder/path/full ID or recorded branch, not the new display name.\nThe explicit Herdr action uses its selected workspace, never another client's focus.\n\nThis is one-shot, not a background branch watcher. A branch/ownership change or\nfailed request can leave an already-updated label; inspect Herdr and refresh again.\nJSON progress records refresh-label, including uncertain requests. No automatic\nrollback or retry. Unchanged labels return without a rename request.",
+      "options": [
+        [
+          "--project PROJECT",
+          "Limit the target to this configured project."
+        ],
+        [
+          "--json",
+          "Print a versioned result envelope; see graftr help output."
+        ],
+        [
+          "-h, --help",
+          "Show help for this command."
+        ]
+      ],
+      "targetNote": "TARGET accepts a checkout name, branch, path, or full ID. See 'graftr help targeting'."
+    },
+    "remove": {
+      "summary": "Delete a clean worktree folder; keep its Git branch",
+      "usage": "[TARGET] [options]",
+      "arguments": [
+        [
+          "TARGET",
+          "Managed worktree; omit in its directory or owned Herdr workspace."
+        ]
+      ],
+      "options": [
+        [
+          "--yes",
+          "Skip confirmation only; all ownership and clean-Git checks remain."
+        ],
+        [
+          "--project PROJECT",
+          "Limit the target to this configured project."
+        ],
+        [
+          "--json",
+          "Print a versioned result envelope; see graftr help output."
+        ],
+        [
+          "-h, --help",
+          "Show help for this command."
+        ]
+      ],
+      "examples": [
+        "graftr remove my-project--fix-login",
+        "graftr remove"
+      ],
+      "notes": "Asks for confirmation, runs recorded cleanup, closes the workspace, deletes the\ncheckout, and releases its ports. The Git branch is retained.\nUses the current verified attached branch, even after switching away from the\noriginal recorded branch. Confirmation shows both names and the current commit;\nswitching branches or changing that commit after confirmation requires reconfirmation.\nAll existing branches are retained. Detached checkouts still require manual review.\nResults name the observed branch and include recordedBranch when different. When\nboth checkout and registration are already absent, branch is null: the last branch\ncannot be inferred. Historical ownership records are not rewritten to adopt a branch.\nNuke remains strict about the recorded branch and merge checks.\n\nResume observed commits with create PROJECT TASK --branch BRANCH. This creates a new\nenvironment and lease; it cannot recover deleted ignored files.\n\nWARNING: Ignored files, including .env, node_modules, and caches, are deleted.\nSave anything you need first. Tracked changes and untracked files block removal;\n--yes never bypasses those checks, and there is no --force option.\nNoninteractive removal requires --yes unless invoked by an explicit Herdr action.\n\nRemoval from inside an attached task hands off to Herdr's independent worker; a\nremoving receipt means accepted, not completed. Unattached tasks remove directly,\neven from inside; your shell may remain in the deleted directory, so cd elsewhere.\nA known attachment still requires server/ownership checks; --no-herdr is not a\ndeletion bypass. Detached/external servers remain your responsibility.\n\nHerdr's native force removal remains Herdr's decision, not this command's policy.\nIts post-event cleanup fences setup and waits for the setup lock before releasing\nleases, then rechecks checkout/Git disappearance. It does not kill installers or\nreplay deletion. Failed cleanup or late writes retain ownership for review.",
+      "targetNote": "TARGET accepts a checkout name, branch, path, or full ID. See 'graftr help targeting'."
+    },
+    "nuke": {
+      "summary": "Delete a clean worktree and its fully merged local branch",
+      "usage": "TARGET [options]",
+      "arguments": [
+        [
+          "TARGET",
+          "An explicit managed worktree; omission and @ are refused."
+        ]
+      ],
+      "examples": [
+        "graftr nuke my-project--fix-login"
+      ],
+      "notes": "Run from a terminal outside the target folder and Herdr workspace.\nRequires typing the exact branch name and answering a final confirmation.\nThere is no --yes or --force bypass, and plugin actions cannot skip confirmation.\n\nThe branch must be merged into the main checkout's current branch, named in\nthe confirmation: either its commits are in that history, or (after a squash\nmerge) merging it would change no files. Git's upstream merge check is also\nhonored. Protected\nmain/default branches and branches used by another worktree/task are refused.\nDirty, locked, detached, or ownership-conflicted worktrees are also refused.\n\nWARNING: Deletes the local branch and the entire checkout, including ignored\n.env, node_modules, and caches. Remote branches are untouched. There is no\nautomatic undo; prefer remove when you want to keep the branch.\n\nThis is not atomic across Git, Herdr, and disk. If a later step fails, records\nand leases remain for review and retry. After fixing the reported issue, run\nnuke again and reconfirm; it can finish cleanup after a partial deletion.",
+      "options": [
+        [
+          "--project PROJECT",
+          "Limit the target to this configured project."
+        ],
+        [
+          "--json",
+          "Print a versioned result envelope; see graftr help output."
+        ],
+        [
+          "-h, --help",
+          "Show help for this command."
+        ]
+      ],
+      "targetNote": "TARGET accepts a checkout name, branch, path, or full ID. See 'graftr help targeting'."
+    },
+    "reconcile": {
+      "summary": "Clean up resources for managed workspaces that are no longer open",
+      "usage": "[options]",
+      "examples": [
+        "graftr reconcile"
+      ],
+      "notes": "Checks recorded tasks against their Herdr workspaces and runs queued cleanup\nhooks. Failed/interrupted hooks need an inspected explicit retry.\nDoes not delete checkouts, release retained port leases, or stop servers.\nStandalone tasks are skipped; not having a workspace is normal for them.\nAn unreachable Herdr connection is not treated as a closed workspace.",
+      "options": [
+        [
+          "--json",
+          "Print a versioned result envelope; see graftr help output."
+        ],
+        [
+          "-h, --help",
+          "Show help for this command."
+        ]
+      ],
+      "targetNote": null
+    },
+    "migrate": {
+      "summary": "Convert retired built-in Tailscale profiles and records to hooks",
+      "usage": "[options]",
+      "options": [
+        [
+          "--apply",
+          "Back up privately, then convert. Without it, only preview."
+        ],
+        [
+          "--json",
+          "Print a versioned result envelope; see graftr help output."
+        ],
+        [
+          "-h, --help",
+          "Show help for this command."
+        ]
+      ],
+      "examples": [
+        "graftr migrate",
+        "graftr migrate --apply"
+      ],
+      "notes": "Profiles with httpsPorts but no url/hooks gain the tailnet url and the\npublish-tailscale/cleanup-tailscale hooks (graftr hook tailscale). originsKey and the\nretired default assignments become explicit envOverrides; setupHooks becomes hooks.\nRecords move to task schema 4. Tasks owning a route hand it to an armed cleanup plan\nwith an exact route receipt, so the next cleanup/close/remove unpublishes it.\n\nTailscale Serve, .env files, ports, URLs, workspaces and checkouts are not changed.\nRecorded hosts stay authoritative; a project without records asks Tailscale for this\nmachine's name. Unfinished legacy cleanup or ambiguous hosts block the whole apply.\nBackups of projects.json and each converted record go to the private state\ndirectory's migration-backups. Rerunning finishes an interrupted apply.\nUpgrade every graftr executable sharing this state first: older builds refuse\nschema 4 records. Config/state directories still named devtree are renamed to\ngraftr last, leaving a devtree symlink for processes that already resolved them.",
+      "targetNote": null
+    },
+    "logs": {
+      "summary": "List a task's private installer and hook output logs",
+      "usage": "[TARGET] [options]",
+      "arguments": [
+        [
+          "TARGET",
+          "Managed worktree; omit in its directory or owned Herdr workspace."
+        ]
+      ],
+      "options": [
+        [
+          "--latest",
+          "Print the newest log's contents instead of the list."
+        ],
+        [
+          "--project PROJECT",
+          "Limit the target to this configured project."
+        ],
+        [
+          "--json",
+          "Print a versioned result envelope; see graftr help output."
+        ],
+        [
+          "-h, --help",
+          "Show help for this command."
+        ]
+      ],
+      "examples": [
+        "graftr logs",
+        "graftr logs fix-login --latest",
+        "graftr logs my-project--fix-login --json"
+      ],
+      "notes": "Each installer and setup/cleanup/retire hook run writes its stdout and stderr to\na private log (0600) under the state directory's logs/<task-id>/. Output is never\ncopied into CLI results, JSON, status or Herdr notifications; failure messages name\nthe log's path instead. Logs may contain whatever those commands print, including\nsecrets, so --latest prints only when you ask, and never with --json.\nEach log is cut at 4 MiB and each task keeps its 50 newest.",
+      "targetNote": "TARGET accepts a checkout name, branch, path, or full ID. See 'graftr help targeting'."
+    },
+    "prune": {
+      "summary": "Preview or delete old history, backups and logs from private state",
+      "usage": "[options]",
+      "options": [
+        [
+          "--older-than DAYS",
+          "Only entries untouched for longer than this (default 30)."
+        ],
+        [
+          "--apply",
+          "Delete what the preview lists."
+        ],
+        [
+          "--json",
+          "Print a versioned result envelope; see graftr help output."
+        ],
+        [
+          "-h, --help",
+          "Show help for this command."
+        ]
+      ],
+      "examples": [
+        "graftr prune",
+        "graftr prune --older-than 90",
+        "graftr prune --apply --json"
+      ],
+      "notes": "Graftr already expires this history by itself: once a day, the first lifecycle\ncommand deletes entries older than 30 days. prune clears things sooner or with a\ndifferent cutoff, and previews by default. Covers env refresh backups (which hold\nsecrets), migration backups, run logs, stale creation intents, cleanup scratch\ndirectories, and records of removed tasks and timing samples left by earlier versions. Tailscale and Postgres hook receipts are\ndeleted only when no current task uses them and every route or database they record\nis gone; otherwise they are listed as kept. Task records, setup receipts and lock\nfiles are never pruned, and unrecognized entries are listed and left alone.\ngraftr status reports each category's count, size and oldest entry.",
+      "targetNote": null
+    },
+    "hook": {
+      "summary": "Run a built-in hook command from a project profile",
+      "usage": "tailscale|postgres",
+      "arguments": [
+        [
+          "tailscale",
+          "Publish (afterDependencies) or unpublish (cleanup) the task's private HTTPS URL."
+        ],
+        [
+          "postgres",
+          "Copy the dev database into the task's own (afterEnvironment) or drop it (retire)."
+        ]
+      ],
+      "examples": [
+        "graftr hook tailscale",
+        "graftr hook postgres"
+      ],
+      "notes": "Intended for profile hooks, not interactive use: it reads the GRAFTR_* context\nthat setup/cleanup provide and refuses a stale or foreign generation.\nThe task needs a secondary httpsPorts lease and a url of https://HOST:{{httpsPort}}\nmatching this machine's Tailscale name. Requires Tailscale Serve operator access.\nRoute receipts live in the private state directory's tailscale-hooks and remain\nownership evidence; do not delete them to force adoption.\n\npostgres reads DATABASE_URL from the profile's envSource baseline, creates\n<db>_<taskSlug>, copies the dev database into it with pg_dump, and appends the\ntask's DATABASE_URL/POSTGRES_DB to the worktree's private .env. Add it to both\nhooks.afterEnvironment and hooks.retire; retire drops only a database it created\nand never one still in use. Close and cleanup keep the database. Raise its\ntimeoutMs for large databases. See graftr help hooks.",
+      "options": [
+        [
+          "-h, --help",
+          "Show help for this command."
+        ]
+      ],
+      "targetNote": null
+    },
+    "completion": {
+      "summary": "Print a shell completion script for custom installations",
+      "usage": "bash",
+      "arguments": [
+        [
+          "bash",
+          "Generate completion for Bash; other shells are not yet supported."
+        ]
+      ],
+      "examples": [
+        "graftr completion bash"
+      ],
+      "notes": "Prints a Bash completion script; it never edits your shell configuration.\nInstall it explicitly for your user, for example:\n  mkdir -p ~/.local/share/bash-completion/completions\n  graftr completion bash > ~/.local/share/bash-completion/completions/graftr\n\nCompletion reads managed worktree metadata and, for creation options, local Git\nrefs. It never connects to Herdr or runs setup, project scripts, hooks, or servers.\nMissing or invalid state produces no dynamic suggestions or diagnostic noise.",
+      "options": [
+        [
+          "-h, --help",
+          "Show help for this command."
+        ]
+      ],
+      "targetNote": null
+    }
+  }
+}

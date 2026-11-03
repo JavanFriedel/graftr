@@ -1,0 +1,151 @@
+# Scripting: JSON results and partial failures
+
+Part of the [Graftr guide](../README.md).
+
+## Machine-readable command results
+
+Public commands are human-readable by default, including create/setup/open,
+cleanup/removal, health, labels, freeze/thaw/scheduling and plugin installation.
+Scripts and agents must explicitly request `--json`; output is never switched to
+JSON automatically when redirected. Existing JSON envelope versions, exit codes
+and safety/confirmation checks are unchanged.
+
+Human tables use the terminal width: status first wraps long project/task names and
+addresses inside their columns, keeping Address in the table when readable columns fit.
+On narrower screens, long trailing columns move beneath each row,
+and narrow terminals get stacked labeled fields. Paths, identifiers, URLs and notes
+are wrapped without truncation. Redirected output defaults to 80 columns; set
+`COLUMNS` to choose another width. `--json` and raw `logs --latest` are never wrapped.
+Internal event/startup/timer workers retain their machine-readable protocol.
+
+`graftr adopt PATH --json` registers existing external setup without provisioning by
+default. `status --json` adds `data.adopted` alongside unchanged provisioned tasks;
+inventory uses `tracking: "adopted"` and an `adoption` record. Optional stage progress
+includes `save-adoption`. See [Adopt existing worktrees](adopting.md) for explicit
+installer/environment/hook controls and the external-ownership boundary.
+
+Help uses one command/description alignment across groups and one argument/option
+alignment per command page. Wrapped descriptions keep a hanging indent; very narrow
+terminals place descriptions beneath their labels instead.
+
+Interactive human output colors semantic statuses: ready/thawed/healthy in green,
+closed/pending/unknown in yellow, frozen in blue, failures in red, and skipped or
+inactive states in gray. Status words remain present; color is never the only signal.
+Colors are disabled for redirected output, `TERM=dumb`, or when `NO_COLOR` is set
+(for example `NO_COLOR=1 graftr status`). JSON and internal worker output never
+contain generated terminal colors. Coloring does not affect table widths or wrapping.
+Headings share bold styling. `status` starts directly with its unindented table,
+without a command heading or routine explanatory footer; the `--json` hint remains.
+Its human labels distinguish worktree `prepared`, `closed` and `resources
+cleaned` from setup `completed`. JSON and stored state keep their existing values.
+`status --json` omits recorded hook commands and context from both cleanup and
+retirement plans. Hook names, timeouts, state, attempts and results remain visible;
+private persisted plans are unchanged.
+`graftr history` separately shows
+retained storage as a category/count/size/oldest-date table. Its `--json` result has
+`data.retained`; the existing `status --json` retained metadata is unchanged.
+Maintenance commands (`env refresh`, `prune`, `migrate`) use yellow
+for previews or differences, green for applied results, and red for blocked changes.
+Environment refresh still exposes key names/actions only, never private values.
+
+Lifecycle and inspection commands support `--json` for one result envelope on stdout:
+
+```bash
+graftr create my-project fix-login --wait --json
+graftr open fix-login --json
+graftr list my-project --json
+graftr status --json
+graftr history --json
+graftr help output
+```
+
+The envelope always contains `schemaVersion: 1`, `command`, `ok`, `outcome`, `data`,
+`error`, and `progress`. This version describes the CLI result, not the persisted
+task/setup schemas. `data` contains the command-specific result; on an exception it
+is `null`. `command` can be `null` if argument parsing could not identify a command.
+`error` is `null` on success, otherwise an object containing a stable coarse
+`code`, readable `message`, `phase`, optional structured `details` (or `null`), and
+`recovery` instructions. Do not parse message text or assume errors include stack
+traces, subprocess output, or private dotenv contents.
+
+| Outcome | Meaning | Exit / `ok` |
+| --- | --- | --- |
+| `completed` | Requested action finished; explicit `--no-setup` is a successful skip. | 0 / true |
+| `queued` | Herdr accepted a worker; the action is **not confirmed finished**. | 0 / true |
+| `cancelled` | The user declined confirmation; no lifecycle mutation was attempted. | 0 / true |
+| `failed` | An error occurred before a tracked lifecycle mutation, or application health checks failed. | 1 / false |
+| `partial` | Setup is incomplete/unmanaged, or a lifecycle mutation was attempted before an error. | 1 / false |
+
+Always inspect `outcome`: `ok: true` means the invocation was handled successfully,
+not necessarily that the requested worktree is ready or removed. Queued results keep
+the worker's `data.logId` where available; follow `graftr status` and Herdr plugin logs.
+`create`, `setup`, and `open` retain setup status, stage, dependencies, path/workspace,
+timings, and any dispatch log ID in JSON mode. Incomplete/unmanaged setup now returns
+exit 1 from **all three entry points**, including default-output `create`; a retained
+plain checkout is not successful managed setup. Explicit `create --no-setup` remains
+exit 0. Health with no configured checks remains `not-configured`, not unhealthy.
+
+**JSON inventory migration:** `graftr list PROJECT --json` now uses this envelope.
+Its former inventory is unchanged inside `data`; update consumers from `.worktrees`
+to `.data.worktrees` and from `.project` to `.data.project`. Scripts parsing the old
+default JSON from public commands must add `--json` and read `.data` instead of the
+unwrapped object. The explicit `--json` result is unchanged.
+Help/bare invocation still produce text, and explicit help wins even with `--json`.
+Completion generation and internal plugin events do not support JSON mode.
+
+`freeze`, `frozen`, `thaw` and `schedule` also support the result envelope. Status
+includes a `frozen` array alongside active `tasks` and `setups`; frozen entries hold
+no port leases. A queued freeze is not finished. Thaw failures return `THAW_ATTENTION`
+with retained recovery state. Freeze/schedule progress includes `save-frozen`,
+`schedule-thaw` and `cancel-thaw`: timer activation/cancellation can be partial, just
+like checkout operations. See [Freeze and scheduled return](freezing.md).
+
+`graftr plugin install --json` reports the installed plugin ID, managed
+directory and hooks. Progress includes `write-plugin` and `link-plugin`; a link error
+can be partial and does not prove that Herdr registration failed. Inspect
+`herdr plugin list` before retrying. Installation never runs startup hooks. The
+plugin's startup worker reconciles and checks scheduled returns by default;
+top-level `startupThaw: false` disables only that startup return check.
+
+### Partial failures and safe recovery
+
+`progress` records ordered lifecycle stages attempted **in this invocation**:
+
+```json
+[
+  { "action": "run-hook", "target": "my-project--fix-login", "status": "completed" },
+  { "action": "save-task", "target": "my-project--fix-login", "status": "completed" },
+  { "action": "close-workspace", "target": "my-project--fix-login", "status": "uncertain" }
+]
+```
+
+`completed` means the stage returned, not that it necessarily changed something or
+proves the current external state. `uncertain` means it threw; for example, a workspace
+may close before its RPC response is lost. Successful steps followed by a dirty-Git
+recheck failure also produce `partial`, even if there is no uncertain mutation step.
+Reconcile results can include successful earlier targets before a later target fails.
+An incomplete setup receipt from an earlier request can yield `partial` with no new
+mutation steps. These distinctions prevent either a false success or a false claim
+that nothing happened.
+
+Progress is not a transaction/rollback log or an inventory of current resources. It
+excludes lock/intent files, timing history, cosmetic label changes, and arbitrary
+side effects of installers or approved health scripts. Read-only status/list and
+application checks do not gain lifecycle mutation stages. Reporting errors does not
+probe Git/Herdr or hook resources again or mutate resources to manufacture a recovery result.
+
+Error phases are `arguments`, `state`, `target`, `preflight`, `confirmation`, and
+`operation`. Error codes include `INVALID_ARGUMENTS`, `STATE_UNAVAILABLE`,
+`CONFIG_UNAVAILABLE`, `INVALID_JSON`, `INVALID_CREATION_CONFIG`, `TARGET_NOT_FOUND`, `TARGET_AMBIGUOUS`,
+`TARGET_RESOLUTION_FAILED`, `PREFLIGHT_FAILED`, `CONFIRMATION_REQUIRED`,
+`CONFIRMATION_FAILED`, `SETUP_INCOMPLETE`, `SETUP_UNMANAGED`, `HEALTH_UNHEALTHY`,
+and the fallback `OPERATION_FAILED`. Ambiguous selector details contain only public
+candidate IDs/projects/branches/paths. Keep room for new codes; unknown codes are still
+failures, not permission to bypass checks.
+
+Review `error.recovery`, retained records/leases, Git, Herdr, and hook resources before
+retrying a partial/uncertain action. Never automatically replay or undo uncertain
+steps. JSON mode adds no `--force` or confirmation bypass: remove still needs a
+terminal or its existing explicit `--yes`/native-action authorization, and nuke
+still needs typed branch confirmation in a terminal. Prompts and optional diagnostic
+warnings use stderr; stdout stays a single result document.

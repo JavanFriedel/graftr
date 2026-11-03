@@ -1,0 +1,76 @@
+id = "local.graftr"
+name = "Graftr"
+version = "0.2.0"
+min_herdr_version = "0.9.3"
+description = "Set up worktrees, dependencies, and private URLs; dev servers remain user-managed."
+platforms = ["linux"]
+
+[[actions]]
+id = "setup"
+title = "Set up worktree / retry setup"
+contexts = ["workspace"]
+command = ["graftr", "setup", "--wait"]
+
+[[actions]]
+id = "setup-skip-install"
+title = "Set up worktree (skip dependency install)"
+contexts = ["workspace"]
+command = ["graftr", "setup", "--skip-install", "--wait"]
+
+[[actions]]
+id = "open"
+title = "Open / prepare worktree (full setup)"
+contexts = ["workspace"]
+command = ["graftr", "open", "--wait"]
+
+[[actions]]
+id = "cleanup"
+title = "Run worktree cleanup hooks, e.g. unpublish URL (keep files)"
+contexts = ["workspace"]
+command = ["graftr", "cleanup"]
+
+[[actions]]
+id = "close"
+title = "Close worktree workspace (keep files)"
+contexts = ["workspace"]
+command = ["graftr", "close"]
+
+[[actions]]
+id = "refresh-label"
+title = "Refresh workspace label (current branch)"
+description = "Updates the owned workspace label only. Does not run setup, change recorded ownership, or rename Git branches/folders."
+contexts = ["workspace"]
+command = ["graftr", "label"]
+
+[[actions]]
+id = "remove"
+title = "Delete clean worktree folder (keep branch)"
+description = "Verifies the current branch and refuses uncommitted/untracked work. Deletes ignored files, including .env; keeps all Git branches."
+contexts = ["workspace"]
+command = ["graftr", "remove"]
+
+[[startup]]
+command = ["graftr", "_startup"]
+
+[[actions]]
+id = "freeze"
+title = "Freeze clean worktree (reclaim disk space, keep branch)"
+description = "Deletes ignored files and runs cleanup/retire hooks. Keeps a recovery record; thaw regenerates the environment. Use the CLI to set a scheduled return date."
+contexts = ["workspace"]
+command = ["graftr", "freeze"]
+
+[[events]]
+on = "worktree.created"
+command = ["graftr", "_event"]
+
+[[events]]
+on = "worktree.opened"
+command = ["graftr", "_event"]
+
+[[events]]
+on = "workspace.closed"
+command = ["graftr", "_event"]
+
+[[events]]
+on = "worktree.removed"
+command = ["graftr", "_event"]
