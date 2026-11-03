@@ -2,6 +2,29 @@
 
 Part of the [Graftr guide](../README.md).
 
+## Incomplete status and inventory
+
+`graftr status` and `graftr list PROJECT` isolate invalid individual task, setup,
+adoption and (for status) frozen record files. Validated records remain visible;
+the command identifies the affected paths relative to Graftr's state directory,
+labels the report incomplete, and exits 1. It never prints rejected file contents,
+trusts fields from them, repairs them, or releases their leases.
+
+With `--json`, these reports retain their usable `data`, add `data.recordIssues`
+(each with `path`, `code: "INVALID_RECORD"` and a generic `message`), and use
+`ok: false`, `outcome: "partial"`, `error.code: "RECORDS_INCOMPLETE"`. Healthy output
+is unchanged and has no `recordIssues` field. A damaged ownership record means an
+otherwise unclaimed Git checkout has **unknown** tracking, not proven unmanaged;
+non-main inventory entries also carry `incomplete-tracking` in their issues.
+
+This is reporting-only tolerance, not lifecycle authorization. Allocation,
+cleanup/removal, freeze/thaw and other strict readers still refuse invalid records.
+Unsafe/unreadable category directories, configuration errors, Git inventory errors,
+and retained-history failures still fail the report rather than pretending those
+boundaries were checked. The separate `frozen` command remains strict. Review and
+preserve named files privately before retrying; do not delete records merely to
+make the warning disappear.
+
 ## Read-only task diagnosis
 
 When a task stops working, start with recorded-resource diagnosis rather than
@@ -53,6 +76,12 @@ or other project commands. Profile/receipt error contents and service responses 
 not echoed in findings. A ready receipt is historical evidence, not current
 environment/dependency validation. Existing `list`, `status`, completion, and
 `reconcile` retain their existing responsibilities.
+
+Reconciliation snapshots task/setup records under the registry lock, releases that
+lock while reading Herdr, then rechecks the snapshot before recording any closures
+or queuing cleanup. A concurrent record change invalidates the result and requests
+a fresh explicit retry rather than overwriting newer state. This does not change
+ownership checks or claim that every other command's external waits are lock-free.
 
 Review findings and pending installer/hook effects **before** deliberately using
 `setup`, `open`, or `cleanup`. Changed branches,
@@ -107,20 +136,24 @@ could be a baseline rotation **or a deliberate local edit**; Graftr does not gue
 | --- | --- |
 | `missing` | Add from the current baseline only when `--apply` is requested. |
 | `different` | Preserve unless explicitly selected with `--take-baseline KEY`. |
-| `same` | Preserve existing bytes and syntax. |
+| `same` | Preserve, unless explicitly selected to collapse duplicate declarations. |
 | `local-only` | Preserve; absence from today's baseline is not proof of removal. |
 | `managed` | Preserve fixed public assignments, including ports/URLs; selection is refused. |
 
 `--take-baseline KEY` is repeatable, accepts **names only**, and is still read-only
 without `--apply`. Unknown, duplicate, or managed key selections are refused.
-Apply always includes missing baseline keys as well as selected differing keys.
+Apply always includes missing baseline keys as well as selected differing or duplicate keys.
 Without history, a missing key might be a deliberate local omission, not a newly
 added baseline variable; review the preview before authorizing all missing additions.
-No keys are removed, no public assignments or profile changes are adopted, and
-the original environment remains an exact byte prefix. Whole selected baseline
-assignments are appended, using the same last-value-wins parser semantics as setup;
-existing duplicate assignments, comments, quoting, BOM, and line endings are kept.
-Values and shell references are never expanded or executed.
+No keys are removed, and no public assignments or profile changes are adopted.
+Selected keys use the last baseline declaration's raw syntax, replacing the first
+current occurrence in place and removing all other declarations of that key. A
+selected key with duplicates is replaced even when its last value already matches.
+Missing keys are appended. Untouched assignments (including unselected duplicates),
+comments, quoting, BOM and line endings retain their bytes; the whole original file
+is no longer necessarily a prefix. Values and shell references are never expanded
+or executed, and no secret values are re-encoded. Application-specific interpolation
+and externally inherited environment precedence still belong to the application's loader.
 
 Both baseline and target must be stable private regular files owned by you at
 canonical non-symlink paths, at most 4 MiB. The source must be the profile's approved
@@ -129,8 +162,8 @@ be untracked. Refresh does not generate a missing environment or adopt a changed
 checkout/branch. It conservatively accepts ordinary variable names, `export`,
 `=`/colon assignments, comments, single/double/backtick quoting, and multiline values,
 and refuses malformed, ambiguous, unsupported, binary, or invalid-UTF8 input rather
-than silently dropping text. This narrower refresh grammar does not change setup's
-existing parser or generation behavior.
+than silently dropping text. Fresh generation uses the same strict grammar; routine
+setup still leaves existing files untouched and verifies only managed public values.
 
 Pending setup, or preparing state without a recorded incomplete attempt, is refused
 rather than assuming a worker stopped. A recorded failed attempt can be refreshed

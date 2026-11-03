@@ -41,20 +41,51 @@ impl Lifecycle<'_, '_> {
         self.engine.cancel_setup(task, reason)
     }
     pub fn reconcile(&self) -> Result<()> {
+        let (snapshot, setup_snapshot) = {
+            let _state = locks::state(self.engine.paths)?;
+            (
+                records::tasks(&self.engine.paths.state)?,
+                records::setups(&self.engine.paths.state)?,
+            )
+        };
+        let mut sessions = std::collections::HashMap::new();
+        for record in &snapshot {
+            let task = record.value();
+            let Some(socket) = task["socket"].as_str() else {
+                continue;
+            };
+            if task["status"] == "preparing" && task["workspaceId"].is_null() {
+                continue;
+            }
+            if !sessions.contains_key(socket) {
+                sessions.insert(socket.to_owned(), self.engine.workspaces(socket)?);
+            }
+        }
         let mut pending = Vec::new();
         {
             let _state = locks::state(self.engine.paths)?;
-            let mut sessions = std::collections::HashMap::new();
-            for record in records::tasks(&self.engine.paths.state)? {
+            // External reads must not block unrelated registry operations. Refuse a
+            // stale snapshot before making any closure or cleanup-plan changes.
+            let current = records::tasks(&self.engine.paths.state)?;
+            let setups = records::setups(&self.engine.paths.state)?;
+            ensure(
+                current
+                    .iter()
+                    .map(records::Task::value)
+                    .eq(snapshot.iter().map(records::Task::value))
+                    && setups
+                        .iter()
+                        .map(records::Setup::value)
+                        .eq(setup_snapshot.iter().map(records::Setup::value)),
+                "Task or setup records changed during reconciliation; retry after reviewing the current workspace state",
+            )?;
+            for record in current {
                 let mut task = record.value().clone();
                 let Some(socket) = task["socket"].as_str() else {
                     continue;
                 };
                 if task["status"] == "preparing" && task["workspaceId"].is_null() {
                     continue;
-                }
-                if !sessions.contains_key(socket) {
-                    sessions.insert(socket.to_owned(), self.engine.workspaces(socket)?);
                 }
                 let spaces = &sessions[socket];
                 let workspace = spaces
@@ -143,12 +174,60 @@ impl Lifecycle<'_, '_> {
         }
         self.cleanup(id, true)
     }
+    fn require_close_owner(&self, task: &Value) -> Result<()> {
+        let tasks = records::tasks(&self.engine.paths.state)?;
+        ensure(
+            tasks
+                .iter()
+                .filter(|r| r.value()["path"] == task["path"])
+                .count()
+                == 1
+                && !tasks.iter().any(|r| {
+                    r.value()["id"] != task["id"]
+                        && r.value()["socket"] == task["socket"]
+                        && !task["workspaceId"].is_null()
+                        && r.value()["workspaceId"] == task["workspaceId"]
+                }),
+            "Conflicting checkout/workspace ownership; review records before closing",
+        )
+    }
     pub fn cleanup(&self, id: &str, close: bool) -> Result<Value> {
+        let observation = if close {
+            let (task, receipt) = {
+                let _lock = locks::state(self.engine.paths)?;
+                let task = self.task(id)?;
+                self.require_close_owner(&task)?;
+                let receipt = records::setup_for(
+                    &self.engine.paths.state,
+                    task["socket"].as_str(),
+                    string(&task, "path"),
+                )?;
+                (task, receipt)
+            };
+            let workspace = self.engine.workspace(&task)?;
+            Some((task, receipt, workspace))
+        } else {
+            None
+        };
         let task = {
             let _lock = locks::state(self.engine.paths)?;
             let mut task = self.task(id)?;
-            let workspace = if close {
-                self.engine.workspace(&task)?
+            let workspace = if let Some((expected, expected_receipt, workspace)) = observation {
+                let receipt = records::setup_for(
+                    &self.engine.paths.state,
+                    task["socket"].as_str(),
+                    string(&task, "path"),
+                )?;
+                // Do not cancel a newer setup or act on an attachment changed while
+                // waiting for inventory. The close itself remains serialized.
+                ensure(
+                    task == expected
+                        && receipt.as_ref().map(records::Setup::value)
+                            == expected_receipt.as_ref().map(records::Setup::value),
+                    "Task or setup changed during close inventory; review the current state and retry close",
+                )?;
+                self.require_close_owner(&task)?;
+                workspace
             } else {
                 None
             };

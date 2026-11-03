@@ -138,6 +138,7 @@ pub fn format(
     adopted: &[Adoption],
     frozen: &[Frozen],
     columns: usize,
+    incomplete: bool,
 ) -> String {
     let records = frozen_records(frozen);
     let mut matched = vec![false; setups.len()];
@@ -247,7 +248,14 @@ pub fn format(
         ));
     }
     if tasks.is_empty() && adopted.is_empty() && records.is_empty() {
-        sections.push("No managed worktrees or frozen tasks.".into());
+        sections.push(
+            if incomplete {
+                "No validated worktrees or frozen tasks to display."
+            } else {
+                "No managed worktrees or frozen tasks."
+            }
+            .into(),
+        );
     }
     let mut others: Vec<_> = setups
         .iter()

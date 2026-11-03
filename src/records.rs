@@ -3,6 +3,7 @@ use crate::{
     environment,
     validation::{pattern, *},
 };
+use serde::Serialize;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{
@@ -734,17 +735,18 @@ fn stem(path: &Path) -> Result<&str> {
 pub fn tasks(state: &Path) -> Result<Vec<Task>> {
     json_files(state)?
         .iter()
-        .map(|path| {
-            let record_id = stem(path)?;
-            id(record_id)?;
-            let record = Task::parse(&read_json(path)?)?;
-            ensure(
-                record.value()["id"] == record_id,
-                "Task filename and identity differ",
-            )?;
-            Ok(record)
-        })
+        .map(|path| task_file(path))
         .collect()
+}
+fn task_file(path: &Path) -> Result<Task> {
+    let record_id = stem(path)?;
+    id(record_id)?;
+    let record = Task::parse(&read_json(path)?)?;
+    ensure(
+        record.value()["id"] == record_id,
+        "Task filename and identity differ",
+    )?;
+    Ok(record)
 }
 pub fn setups(state: &Path) -> Result<Vec<Setup>> {
     let root = state.join("setup");
@@ -753,14 +755,15 @@ pub fn setups(state: &Path) -> Result<Vec<Setup>> {
     }
     json_files(&root)?
         .iter()
-        .map(|path| {
-            let record = Setup::parse(&read_json(path)?)?;
-            let key = json!([record.value()["socket"], record.value()["path"]]);
-            let hash = format!("{:x}", Sha256::digest(serde_json::to_vec(&key).unwrap()));
-            ensure(stem(path)? == hash, "Setup receipt filename mismatch")?;
-            Ok(record)
-        })
+        .map(|path| setup_file(path))
         .collect()
+}
+fn setup_file(path: &Path) -> Result<Setup> {
+    let record = Setup::parse(&read_json(path)?)?;
+    let key = json!([record.value()["socket"], record.value()["path"]]);
+    let hash = format!("{:x}", Sha256::digest(serde_json::to_vec(&key).unwrap()));
+    ensure(stem(path)? == hash, "Setup receipt filename mismatch")?;
+    Ok(record)
 }
 
 pub fn setup_for(state: &Path, socket: Option<&str>, path: &str) -> Result<Option<Setup>> {
@@ -823,15 +826,16 @@ pub fn adoptions(state: &Path) -> Result<Vec<Adoption>> {
     }
     json_files(&root)?
         .iter()
-        .map(|path| {
-            let record = Adoption::parse(&read_json(path)?)?;
-            ensure(
-                record.value()["id"] == stem(path)?,
-                "Adoption filename and identity differ",
-            )?;
-            Ok(record)
-        })
+        .map(|path| adoption_file(path))
         .collect()
+}
+fn adoption_file(path: &Path) -> Result<Adoption> {
+    let record = Adoption::parse(&read_json(path)?)?;
+    ensure(
+        record.value()["id"] == stem(path)?,
+        "Adoption filename and identity differ",
+    )?;
+    Ok(record)
 }
 pub fn frozen(state: &Path) -> Result<Vec<Frozen>> {
     let root = state.join("frozen");
@@ -840,16 +844,70 @@ pub fn frozen(state: &Path) -> Result<Vec<Frozen>> {
     }
     json_files(&root)?
         .iter()
-        .map(|path| {
-            id(stem(path)?)?;
-            let record = Frozen::parse(&read_json(path)?)?;
-            ensure(
-                record.value()["id"] == stem(path)?,
-                "Frozen task filename and identity differ",
-            )?;
-            Ok(record)
-        })
+        .map(|path| frozen_file(path))
         .collect()
+}
+fn frozen_file(path: &Path) -> Result<Frozen> {
+    id(stem(path)?)?;
+    let record = Frozen::parse(&read_json(path)?)?;
+    ensure(
+        record.value()["id"] == stem(path)?,
+        "Frozen task filename and identity differ",
+    )?;
+    Ok(record)
+}
+
+#[derive(Serialize)]
+pub struct RecordIssue {
+    pub path: String,
+    code: &'static str,
+    message: &'static str,
+}
+pub struct Report<T> {
+    pub records: Vec<T>,
+    pub issues: Vec<RecordIssue>,
+}
+// Reporting alone may isolate a bad file. Allocation, cleanup and all other
+// lifecycle readers above stay fail-closed: an invalid record can still own leases.
+fn report<T>(state: &Path, directory: &str, read: fn(&Path) -> Result<T>) -> Result<Report<T>> {
+    let root = state.join(directory);
+    if !directory.is_empty() && exists(&root)? {
+        if directory == "adopted" {
+            private_dir(state)?;
+        }
+        private_dir(&root)?;
+    }
+    let mut report = Report {
+        records: Vec::new(),
+        issues: Vec::new(),
+    };
+    for file in json_files(&root)? {
+        match read(&file) {
+            Ok(record) => report.records.push(record),
+            Err(_) => report.issues.push(RecordIssue {
+                path: file
+                    .strip_prefix(state)
+                    .expect("record inside state")
+                    .to_string_lossy()
+                    .into_owned(),
+                code: "INVALID_RECORD",
+                message: "Record is unreadable, unsafe or invalid; contents were not logged.",
+            }),
+        }
+    }
+    Ok(report)
+}
+pub fn task_report(state: &Path) -> Result<Report<Task>> {
+    report(state, "", task_file)
+}
+pub fn setup_report(state: &Path) -> Result<Report<Setup>> {
+    report(state, "setup", setup_file)
+}
+pub fn adoption_report(state: &Path) -> Result<Report<Adoption>> {
+    report(state, "adopted", adoption_file)
+}
+pub fn frozen_report(state: &Path) -> Result<Report<Frozen>> {
+    report(state, "frozen", frozen_file)
 }
 pub fn frozen_task(state: &Path, record_id: &str) -> Result<Option<Frozen>> {
     id(record_id)?;

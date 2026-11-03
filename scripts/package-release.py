@@ -106,10 +106,16 @@ def main():
     args = parser.parse_args()
     if subprocess.check_output(["git", "status", "--porcelain", "--untracked-files=all"], cwd=ROOT):
         raise ValueError("Release packaging requires a clean committed checkout")
-    subprocess.run(["sh", str(ROOT / "build.sh")], cwd=ROOT, check=True)
-    metadata = json.loads(subprocess.check_output(["cargo", "metadata", "--format-version", "1", "--locked"], cwd=ROOT))
-    sysroot = Path(subprocess.check_output([os.environ.get("RUSTC", "rustc"), "--print", "sysroot"], text=True).strip())
     revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
+    subprocess.run(["sh", str(ROOT / "build.sh")], cwd=ROOT, check=True,
+                   env={**os.environ, "GRAFTR_SOURCE_REVISION": revision})
+    metadata = json.loads(subprocess.check_output(["cargo", "metadata", "--format-version", "1", "--locked"], cwd=ROOT))
+    project = next(p for p in metadata["packages"] if p["id"] == metadata["resolve"]["root"])
+    version = json.loads(subprocess.check_output([str(ROOT / "dist/graftr"), "--version", "--json"], cwd=ROOT))
+    if (version.get("outcome") != "completed" or
+            version.get("data") != {"version": project["version"], "sourceRevision": revision}):
+        raise ValueError("Executable version/source revision does not match the release")
+    sysroot = Path(subprocess.check_output([os.environ.get("RUSTC", "rustc"), "--print", "sysroot"], text=True).strip())
     timestamp = int(subprocess.check_output(["git", "show", "-s", "--format=%ct", "HEAD"], cwd=ROOT, text=True))
     print(package(ROOT, ROOT / "dist/graftr", metadata, sysroot / "share/doc/rust", args.output,
                   args.tag, args.target, revision, timestamp))

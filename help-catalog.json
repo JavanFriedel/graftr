@@ -4,7 +4,7 @@
     "intro": [
       "graftr — prepare Git worktrees and development environments",
       "Give each task its own checkout and environment; optionally publish URLs or attach Herdr.",
-      "Usage:\n  graftr <command> | graftr help <command>"
+      "Usage:\n  graftr <command> | graftr help <command>\n  graftr --version [--json]"
     ],
     "groups": [
       {
@@ -152,6 +152,10 @@
     "help": {
       "type": "boolean",
       "short": "h"
+    },
+    "version": {
+      "type": "boolean",
+      "short": "V"
     },
     "no-setup": {
       "type": "boolean"
@@ -554,7 +558,7 @@
         "graftr list my-project",
         "graftr list my-project --json"
       ],
-      "notes": "Includes the main checkout, managed tasks, adopted external worktrees, and unmanaged Git worktrees.\nCompare setup status with lifecycle state; a folder alone is not proof\nthat setup finished. Listing never probes servers or removes files.",
+      "notes": "Includes the main checkout, managed tasks, adopted external worktrees, and unmanaged Git worktrees.\nCompare setup status with lifecycle state; a folder alone is not proof\nthat setup finished. Listing never probes servers or removes files.\nInvalid record files produce an incomplete report with validated rows and exit 1.\nJSON uses outcome partial and data.recordIssues; file contents are never echoed.\nWhen ownership records are invalid, unclaimed checkouts show unknown tracking, not unmanaged.\nPreserve damaged records and their leases; listing never repairs or deletes them.",
       "options": [
         [
           "--json",
@@ -574,7 +578,7 @@
         "graftr status",
         "graftr status --json"
       ],
-      "notes": "Shows a readable overview of managed worktrees, setup state and addresses,\nplus frozen work, scheduled returns, retries and recovery messages across projects.\nAdopted worktrees show adopted/external; no setup success or unknown address is invented.\nProject and task names have separate columns; full PROJECT--TASK IDs still work\nas command selectors and remain unchanged in JSON output.\nRetained logs and backups are reported separately by graftr history.\nUse --json for full task records, setup receipts, dependency results, recorded timings\nand retained-history details in the versioned result envelope.\nCleanup summaries never include recorded argv or environment context.\nHuman STATE labels include prepared, closed and resources cleaned;\nSETUP completed means the configured setup finished, not that a server is running.\nDependency installation may be explicitly skipped or not configured.\nPending means setup is queued or running. JSON retains the existing status values.\nThis is recorded state, not a live application health check.",
+      "notes": "Shows a readable overview of managed worktrees, setup state and addresses,\nplus frozen work, scheduled returns, retries and recovery messages across projects.\nAdopted worktrees show adopted/external; no setup success or unknown address is invented.\nProject and task names have separate columns; full PROJECT--TASK IDs still work\nas command selectors and remain unchanged in JSON output.\nRetained logs and backups are reported separately by graftr history.\nUse --json for full task records, setup receipts, dependency results, recorded timings\nand retained-history details in the versioned result envelope.\nCleanup summaries never include recorded argv or environment context.\nHuman STATE labels include prepared, closed and resources cleaned;\nSETUP completed means the configured setup finished, not that a server is running.\nDependency installation may be explicitly skipped or not configured.\nPending means setup is queued or running. JSON retains the existing status values.\nThis is recorded state, not a live application health check.\nInvalid record files produce an incomplete report with validated rows and exit 1.\nJSON uses outcome partial and data.recordIssues; file contents are never echoed.\nPreserve damaged records and their leases; status never repairs or deletes them.",
       "options": [
         [
           "--json",
@@ -647,7 +651,7 @@
         "graftr env refresh fix-login --apply",
         "graftr env refresh fix-login --take-baseline EXAMPLE_SECRET --apply --json"
       ],
-      "notes": "Preview is read-only and prints key names/statuses/actions, never values or hashes.\nWithout historical baseline evidence, different values may be local edits or baseline\nchanges. Missing keys may also be deliberate omissions: review the preview first.\n--apply adds missing keys only; --take-baseline explicitly authorizes selected\nreplacements. Existing/local-only keys are never removed. Fixed managed port/URL\nassignments cannot be selected or changed; profile assignment drift must be reviewed.\n\nBoth files must be private owned regular files at canonical non-symlink paths,\nat most 4 MiB, with supported unambiguous dotenv syntax. Missing or tracked target\n.env files, changed Git ownership and pending setup are refused. Preparing tasks\nneed an incomplete receipt; apply also refuses an active per-checkout setup lock.\nNo remote services, project parsers, installers, hooks, health checks or servers run.\n\nApply saves exact original bytes under the private state directory's env-backups\n(outside Git), then rechecks inputs and atomically replaces .env. Existing bytes,\ncomments and assignments remain as a prefix; selected baseline assignments are\nappended with last-value-wins semantics. Backup files contain secrets: keep them\nprivate and review/remove them deliberately; they survive remove/nuke and are not\nautomatically expired.\nNo baseline-provenance/history database or secret hashes are created.\n\nStop external editors/writers before apply. Graftr locks serialize its own operations,\nnot arbitrary file writers; there is no atomic transaction across backup and .env.\nInterrupted/failed apply may leave only a backup or an already-replaced file; review\nprogress, the backup and current .env privately rather than automatically retrying.\nNo automatic rollback or restart: existing shells and applications retain old values.\n\nExit 0 means preview/apply completed, not that every difference was resolved.\ndata.reviewRequired identifies differing values deliberately preserved. Errors use\nthe normal failed/partial JSON envelope; no environment contents are logged.",
+      "notes": "Preview is read-only and prints key names/statuses/actions, never values or hashes.\nWithout historical baseline evidence, different values may be local edits or baseline\nchanges. Missing keys may also be deliberate omissions: review the preview first.\n--apply adds missing keys only; --take-baseline explicitly authorizes selected\nreplacements. Existing/local-only keys are never removed. Fixed managed port/URL\nassignments cannot be selected or changed; profile assignment drift must be reviewed.\n\nBoth files must be private owned regular files at canonical non-symlink paths,\nat most 4 MiB, with supported unambiguous dotenv syntax. Missing or tracked target\n.env files, changed Git ownership and pending setup are refused. Preparing tasks\nneed an incomplete receipt; apply also refuses an active per-checkout setup lock.\nNo remote services, project parsers, installers, hooks, health checks or servers run.\n\nApply saves exact original bytes under the private state directory's env-backups\n(outside Git), then rechecks inputs and atomically replaces .env. Selected keys use\nthe last baseline declaration's raw syntax, replacing the first current occurrence\nand removing its duplicates, even when the last value matches. Missing keys are\nappended; untouched bytes and unselected duplicates are preserved. Values and shell\nreferences are never expanded or executed. Backup files contain secrets: keep them\nprivate; they survive remove/nuke and follow the history/prune retention policy.\nNo baseline-provenance/history database or secret hashes are created.\n\nStop external editors/writers before apply. Graftr locks serialize its own operations,\nnot arbitrary file writers; there is no atomic transaction across backup and .env.\nInterrupted/failed apply may leave only a backup or an already-replaced file; review\nprogress, the backup and current .env privately rather than automatically retrying.\nNo automatic rollback or restart: existing shells and applications retain old values.\n\nExit 0 means preview/apply completed, not that every difference was resolved.\ndata.reviewRequired identifies differing values deliberately preserved. Errors use\nthe normal failed/partial JSON envelope; no environment contents are logged.",
       "targetNote": "TARGET accepts a checkout name, branch, path, or full ID. See 'graftr help targeting'."
     },
     "doctor": {
@@ -993,7 +997,7 @@
         "graftr hook tailscale",
         "graftr hook postgres"
       ],
-      "notes": "Intended for profile hooks, not interactive use: it reads the GRAFTR_* context\nthat setup/cleanup provide and refuses a stale or foreign generation.\nThe task needs a secondary httpsPorts lease and a url of https://HOST:{{httpsPort}}\nmatching this machine's Tailscale name. Requires Tailscale Serve operator access.\nRoute receipts live in the private state directory's tailscale-hooks and remain\nownership evidence; do not delete them to force adoption.\n\npostgres reads DATABASE_URL from the profile's envSource baseline, creates\n<db>_<taskSlug>, copies the dev database into it with pg_dump, and appends the\ntask's DATABASE_URL/POSTGRES_DB to the worktree's private .env. Add it to both\nhooks.afterEnvironment and hooks.retire; retire drops only a database it created\nand never one still in use. Close and cleanup keep the database. Raise its\ntimeoutMs for large databases. See graftr help hooks.",
+      "notes": "Intended for profile hooks, not interactive use: it reads the GRAFTR_* context\nthat setup/cleanup provide and refuses a stale or foreign generation.\nThe task needs a secondary httpsPorts lease and a url of https://HOST:{{httpsPort}}\nmatching this machine's Tailscale name. Requires Tailscale Serve operator access.\nRoute receipts live in the private state directory's tailscale-hooks and remain\nownership evidence; do not delete them to force adoption.\n\npostgres reads DATABASE_URL from the profile's envSource baseline, creates\n<db>_<taskSlug>, copies the dev database into it with pg_dump, and writes one\nDATABASE_URL/POSTGRES_DB assignment each in the worktree's private .env, replacing\nold declarations and removing their duplicates without expanding unrelated values.\nAdd it to both hooks.afterEnvironment and hooks.retire; retire drops only a database\nit created and never one still in use. Close and cleanup keep the database. Raise\nits timeoutMs for large databases. See graftr help hooks.",
       "options": [
         [
           "-h, --help",

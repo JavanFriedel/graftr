@@ -165,6 +165,8 @@ fn parse(
             for short in arg[1..].chars() {
                 if short == 'h' {
                     flags.insert("help".into(), "true".into());
+                } else if short == 'V' {
+                    flags.insert("version".into(), "true".into());
                 } else if strict {
                     let option = if grouped {
                         short.to_string()
@@ -352,6 +354,56 @@ enum Reply {
     Raw(String),
     Unsuccessful(String),
 }
+fn inspection_reply(
+    command: &str,
+    mut data: Value,
+    human: impl FnOnce() -> String,
+    mut issues: Vec<records::RecordIssue>,
+    json: bool,
+    progress: &progress::Progress,
+) -> Reply {
+    let incomplete = !issues.is_empty();
+    issues.sort_by(|left, right| left.path.cmp(&right.path));
+    let output = if json {
+        if incomplete {
+            data["recordIssues"] = json!(issues);
+        }
+        serde_json::to_string_pretty(&envelope(
+            Some(command),
+            if incomplete { "partial" } else { "completed" },
+            data,
+            if incomplete {
+                json!({"code": "RECORDS_INCOMPLETE", "message": "Some records could not be validated; this report is incomplete.", "phase": "operation", "details": null,
+                    "recovery": ["Review data.recordIssues and inspect the named files privately. Preserve records and leases; do not delete, reset or automatically repair them.", "An omitted record may still own a checkout or resources. Resolve the issue and rerun the report before making lifecycle decisions."]})
+            } else {
+                Value::Null
+            },
+            progress,
+        ))
+        .unwrap()
+    } else if incomplete {
+        let files = issues
+            .iter()
+            .map(|issue| format!("  {:?}", issue.path))
+            .collect::<Vec<_>>()
+            .join("\n");
+        terminal::wrap(
+            &format!(
+                "Incomplete report: {} invalid or unreadable record(s); only validated records are shown.\n{files}\nPreserve these files and their leases; inspect them privately before retrying.\n\n{}",
+                issues.len(),
+                human()
+            ),
+            terminal::columns(),
+        )
+    } else {
+        human()
+    };
+    if incomplete {
+        Reply::Unsuccessful(output)
+    } else {
+        Reply::Line(output)
+    }
+}
 fn output_setup(
     command: &str,
     result: &setup::SetupResult,
@@ -470,6 +522,36 @@ fn execute(
             .map_err(Into::into);
     }
     let (positionals, flags) = parse(args, catalog, true)?;
+    if flags.contains_key("version") {
+        if !positionals.is_empty() || flags.keys().any(|key| key != "version" && key != "json") {
+            return Err(
+                "--version accepts only --json, not commands or other options"
+                    .to_owned()
+                    .into(),
+            );
+        }
+        let version = env!("CARGO_PKG_VERSION");
+        let revision = option_env!("GRAFTR_SOURCE_REVISION").filter(|value| {
+            value.len() == 40
+                && value
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        });
+        return Ok(Reply::Line(if json {
+            serde_json::to_string_pretty(&envelope(
+                Some("version"),
+                "completed",
+                json!({"version": version, "sourceRevision": revision}),
+                Value::Null,
+                progress,
+            ))
+            .unwrap()
+        } else if let Some(revision) = revision {
+            format!("graftr {version} ({revision})")
+        } else {
+            format!("graftr {version}")
+        }));
+    }
     let Some(command) = positionals.first().map(String::as_str) else {
         return catalog
             .render(None, terminal::columns())
@@ -1198,19 +1280,20 @@ fn execute(
         });
     }
     if command == "list" {
-        let data = inventory::list(&paths, &positionals[1])?;
-        return Ok(Reply::Line(if json {
-            serde_json::to_string_pretty(&envelope(
-                Some(command),
-                "completed",
-                data,
-                Value::Null,
-                progress,
-            ))
-            .unwrap()
+        let (data, issues) = inventory::list(&paths, &positionals[1])?;
+        let human = if json {
+            String::new()
         } else {
             inventory::format(&data, terminal::columns())
-        }));
+        };
+        return Ok(inspection_reply(
+            command,
+            data,
+            || human,
+            issues,
+            json,
+            progress,
+        ));
     }
     if command == "logs" {
         let selector = positionals.get(1).map(String::as_str);
@@ -1304,31 +1387,49 @@ fn execute(
         }));
     }
     if command == "status" {
-        let tasks = records::tasks(state)?;
-        let setups = records::setups(state)?;
-        let frozen = records::frozen(state)?;
-        let adopted = records::adoptions(state)?;
-        return Ok(Reply::Line(if json {
+        let tasks = records::task_report(state)?;
+        let setups = records::setup_report(state)?;
+        let frozen = records::frozen_report(state)?;
+        let adopted = records::adoption_report(state)?;
+        let mut issues = tasks.issues;
+        issues.extend(setups.issues);
+        issues.extend(frozen.issues);
+        issues.extend(adopted.issues);
+        let incomplete = !issues.is_empty();
+        let data = if json {
             let retained = history::read(state).map_err(|message| Failure {
                 message,
                 phase: "operation",
                 code: "OPERATION_FAILED",
                 details: Value::Null.into(),
             })?;
-            serde_json::to_string_pretty(&envelope(
-                Some(command),
-                "completed",
-                status::data(&tasks, &setups, &adopted, &frozen, &retained),
-                Value::Null,
-                progress,
-            ))
-            .unwrap()
-        } else {
-            terminal::wrap(
-                &status::format(&tasks, &setups, &adopted, &frozen, terminal::columns()),
-                terminal::columns(),
+            status::data(
+                &tasks.records,
+                &setups.records,
+                &adopted.records,
+                &frozen.records,
+                &retained,
             )
-        }));
+        } else {
+            Value::Null
+        };
+        return Ok(inspection_reply(
+            command,
+            data,
+            || {
+                status::format(
+                    &tasks.records,
+                    &setups.records,
+                    &adopted.records,
+                    &frozen.records,
+                    terminal::columns(),
+                    incomplete,
+                )
+            },
+            issues,
+            json,
+            progress,
+        ));
     }
     let retained = history::read(state).map_err(|message| Failure {
         message,

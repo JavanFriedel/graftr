@@ -5,6 +5,7 @@ import errno
 import pty
 import select
 import time
+import re
 import fcntl
 import struct
 import termios
@@ -124,6 +125,42 @@ class NativeCase(unittest.TestCase):
 
 
 class CliTests(NativeCase):
+    def test_version_is_readonly_without_configuration_git_or_home(self):
+        version = re.search(r'^version = "([^"]+)"$', (PROJECT / "Cargo.toml").read_text(), re.MULTILINE)[1]
+        before = bench.readonly_snapshot(self.fixture)
+        env = {"HOME": "", "XDG_CONFIG_HOME": "/nonexistent/graftr-config", "PATH": "/nonexistent",
+               "GRAFTR_SOURCE_REVISION": "f" * 40}
+        result = self.invoke([str(self.native)], ["--version", "--json"], **env)
+        self.assertEqual((result[0], result[2]), (0, ""))
+        output = result[1]
+        self.assertEqual((output["schemaVersion"], output["command"], output["ok"], output["outcome"]),
+                         (1, "version", True, "completed"))
+        self.assertEqual(output["data"]["version"], version)
+        revision = output["data"]["sourceRevision"]
+        if revision is not None:
+            self.assertRegex(revision, r"^[0-9a-f]{40}$")
+        expected = f"graftr {version}" + (f" ({revision})" if revision else "") + "\n"
+        for args in [["--version"], ["-V"]]:
+            self.assertEqual(self.invoke([str(self.native)], args, **env), (0, expected, ""))
+        self.assertEqual(self.invoke([str(self.native)], ["--json", "-V"], **env), result)
+        self.assertEqual(bench.readonly_snapshot(self.fixture), before)
+
+    def test_version_rejects_commands_options_and_values_without_mutation(self):
+        before = bench.readonly_snapshot(self.fixture)
+        for args in [["status", "--version"], ["--version", "create", "bench", "unexpected"],
+                     ["--version", "--project", "bench"], ["--version=true"], ["-V", "--wat"],
+                     ["--", "--version"]]:
+            result = self.invoke([str(self.native)], ["--json", *args])
+            self.assertEqual(result[0], 1, args)
+            self.assertEqual(result[1]["error"]["code"], "INVALID_ARGUMENTS", args)
+        self.assertEqual(bench.readonly_snapshot(self.fixture), before)
+
+    def test_version_help_precedence_and_completion(self):
+        self.assertEqual(self.invoke([str(self.native)], ["--version", "--help"]),
+                         self.invoke([str(self.native)], ["--help"]))
+        for prefix, expected in [("--v", "--version\n"), ("-V", "-V\n")]:
+            self.assertEqual(self.invoke([str(self.native)], ["_complete", "--", prefix]), (0, expected, ""))
+
     def test_all_help_pages_and_topics_match_at_multiple_widths(self):
         with gzip.open(PROJECT / "tests/fixtures/help.json.gz", "rt") as source:
             pages = json.load(source)

@@ -115,7 +115,8 @@ class EnvironmentTests(NativeCase):
             selected = self.invoke(command, ["env", "refresh", task["id"], "--take-baseline=SECRET", "--apply", "--json"])
             self.assertEqual(selected[1]["data"]["status"], "applied")
             self.assertFalse(selected[1]["data"]["reviewRequired"])
-            self.assertTrue(target.read_bytes().endswith(b"SECRET=synthetic-rotated\n"))
+            self.assertEqual(target.read_bytes().count(b"SECRET="), 1)
+            self.assertIn(b"SECRET=synthetic-rotated\r\nKEPT=same\r\nLOCAL_ONLY=keep\r\n", target.read_bytes())
         self.assertEqual(results[0], results[1])
         self.assertEqual(contents[0], contents[1])
 

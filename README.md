@@ -6,7 +6,16 @@ checkout and development environment; optionally attach Herdr or publish a priva
 Graftr is a **one-shot tool, not a server supervisor**. You start your applications.
 Human-readable output is the default; use `--json` for structured results and failures.
 
-## Build
+## Install
+
+Prebuilt **Linux x86_64 GNU** binaries are available on the
+[releases page](https://github.com/JavanFriedel/graftr/releases).
+[Installation instructions](docs/setup.md#prebuilt-release) pin an exact version and
+verify its archive checksum before running it. No Rust, Bun or Python is needed.
+Git and Linux system libraries are still runtime requirements; integrations have
+their own optional dependencies below.
+
+## Build from source
 
 Supported platform: **Linux**. Requires Rust/Cargo and the system C linker/toolchain
 to build. No Bun, Node, Python or external `flock` is required to build or run Graftr.
@@ -94,8 +103,13 @@ not a sandbox; review them before enabling them. See [security boundaries](SECUR
 | [Scripting](docs/scripting.md) | JSON envelopes, partial failures and recovery |
 | [Upgrading](docs/upgrading.md) | Legacy record/config compatibility |
 | [Benchmarks](docs/benchmarks.md) | Repeatable timing, RSS and lifecycle contracts |
+| [Releases](docs/releasing.md) | Versioned packaging, checksums and deliberate publication |
 
 `graftr help getting-started` and `graftr <command> --help` also work without configuration.
+Source builds now support `graftr --version` (or `-V`) and `graftr --version --json`
+without configuration or Git access. Release packaging embeds and verifies its source
+revision; ordinary source builds report the package version with no revision claim.
+The already-published v0.1.0 predates this flag; use its `RELEASE.json` for identification.
 
 ## Check
 

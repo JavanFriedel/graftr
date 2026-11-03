@@ -71,7 +71,7 @@ pub fn registered(repo: &str) -> Result<Vec<Worktree>> {
         .stdout,
     )
 }
-pub fn list(paths: &Paths, project: &str) -> Result<Value> {
+pub fn list(paths: &Paths, project: &str) -> Result<(Value, Vec<records::RecordIssue>)> {
     let profile = config::settings(paths, project)?;
     let repo = string(&profile, "repo")?;
     let root = string(&profile, "worktreeRoot")?;
@@ -80,15 +80,24 @@ pub fn list(paths: &Paths, project: &str) -> Result<Value> {
         "Inventory paths must be absolute and normalized",
     )?;
     let registered = registered(repo)?;
-    let tasks: Vec<_> = records::tasks(&paths.state)?
+    let task_report = records::task_report(&paths.state)?;
+    let adoption_report = records::adoption_report(&paths.state)?;
+    let setup_report = records::setup_report(&paths.state)?;
+    let tracking_incomplete = !task_report.issues.is_empty() || !adoption_report.issues.is_empty();
+    let mut record_issues = task_report.issues;
+    record_issues.extend(adoption_report.issues);
+    record_issues.extend(setup_report.issues);
+    let tasks: Vec<_> = task_report
+        .records
         .into_iter()
         .filter(|t| t.value()["project"] == project || t.value()["repo"] == repo)
         .collect();
-    let adopted: Vec<_> = records::adoptions(&paths.state)?
+    let adopted: Vec<_> = adoption_report
+        .records
         .into_iter()
         .filter(|t| t.value()["project"] == project || t.value()["repo"] == repo)
         .collect();
-    let setups = records::setups(&paths.state)?;
+    let setups = setup_report.records;
     let mut candidates: Vec<String> = registered
         .iter()
         .map(|t| t.path.clone())
@@ -144,6 +153,9 @@ pub fn list(paths: &Paths, project: &str) -> Result<Value> {
             Err(_) => return Err("Could not inspect checkout directory".into()),
         };
         let mut issues = Vec::new();
+        if tracking_incomplete && main != Some(&path) {
+            issues.push("incomplete-tracking");
+        }
         if !present {
             issues.push("missing-checkout");
         }
@@ -186,6 +198,8 @@ pub fn list(paths: &Paths, project: &str) -> Result<Value> {
                 "managed"
             } else if !adoptions.is_empty() {
                 "adopted"
+            } else if tracking_incomplete {
+                "unknown"
             } else if git.is_some() {
                 "unmanaged"
             } else {
@@ -237,7 +251,10 @@ pub fn list(paths: &Paths, project: &str) -> Result<Value> {
             .cmp(&(a["path"].as_str() == main))
             .then_with(|| compare(a["path"].as_str().unwrap(), b["path"].as_str().unwrap()))
     });
-    Ok(json!({"project": project, "repo": repo, "worktreeRoot": root, "worktrees": worktrees}))
+    Ok((
+        json!({"project": project, "repo": repo, "worktreeRoot": root, "worktrees": worktrees}),
+        record_issues,
+    ))
 }
 
 fn display(value: &str) -> String {

@@ -77,25 +77,7 @@ fn unique(task: &Value, spaces: &[herdr::Workspace]) -> bool {
                 && Some(w.workspace_id.as_str()) != task["workspaceId"].as_str()
         })
 }
-pub fn refresh(paths: &Paths, id: &str, progress: &crate::progress::Progress) -> Result<Value> {
-    let initial = records::task(&paths.state, id)?;
-    let initial = initial.value();
-    ensure(
-        !initial["socket"].is_null(),
-        "Standalone task has no Herdr attachment; open it from Herdr before refreshing its workspace label",
-    )?;
-    let _tree_lock = locks::worktree(paths, string(initial, "path"), true)?;
-    let _state_lock = locks::state(paths)?;
-    let task = records::task(&paths.state, id)?;
-    let task = task.value();
-    checkout::require_identity(task, initial)?;
-    let receipt = records::setup_for(&paths.state, task["socket"].as_str(), string(task, "path"))?;
-    let receipt_status = receipt.as_ref().and_then(|r| r.value()["status"].as_str());
-    ensure(
-        receipt_status != Some("pending")
-            && !(task["status"] == "preparing" && receipt_status != Some("incomplete")),
-        "Setup is pending/preparing without a recorded failure; wait for its worker before refreshing the label",
-    )?;
+fn require_unique_owner(paths: &Paths, task: &Value) -> Result<()> {
     let records = records::tasks(&paths.state)?;
     ensure(
         records
@@ -104,24 +86,50 @@ pub fn refresh(paths: &Paths, id: &str, progress: &crate::progress::Progress) ->
             .count()
             == 1
             && !records.iter().any(|r| {
-                r.value()["id"] != id
+                r.value()["id"] != task["id"]
                     && r.value()["socket"] == task["socket"]
                     && !task["workspaceId"].is_null()
                     && r.value()["workspaceId"] == task["workspaceId"]
             }),
         "Conflicting checkout/workspace ownership; review records before refreshing the label",
-    )?;
-    let settings = config::settings(paths, string(task, "project"))?;
+    )
+}
+pub fn refresh(paths: &Paths, id: &str, progress: &crate::progress::Progress) -> Result<Value> {
+    let initial = records::task(&paths.state, id)?;
+    let initial = initial.value();
     ensure(
-        settings.get("repo") == Some(&task["repo"]),
-        "Project profile no longer owns this repository",
+        !initial["socket"].is_null(),
+        "Standalone task has no Herdr attachment; open it from Herdr before refreshing its workspace label",
     )?;
-    let observed = checkout::observe(task)?;
-    ensure(
-        !observed["currentBranch"].is_null()
-            && crate::paths::exists(Path::new(string(task, "path")))?,
-        "Label refresh requires an existing registered checkout with an attached local branch",
-    )?;
+    let _tree_lock = locks::worktree(paths, string(initial, "path"), true)?;
+    let (task, receipt, settings, observed) = {
+        let _state_lock = locks::state(paths)?;
+        let task = records::task(&paths.state, id)?;
+        let task = task.value();
+        checkout::require_identity(task, initial)?;
+        let receipt =
+            records::setup_for(&paths.state, task["socket"].as_str(), string(task, "path"))?;
+        let receipt_status = receipt.as_ref().and_then(|r| r.value()["status"].as_str());
+        ensure(
+            receipt_status != Some("pending")
+                && !(task["status"] == "preparing" && receipt_status != Some("incomplete")),
+            "Setup is pending/preparing without a recorded failure; wait for its worker before refreshing the label",
+        )?;
+        require_unique_owner(paths, task)?;
+        let settings = config::settings(paths, string(task, "project"))?;
+        ensure(
+            settings.get("repo") == Some(&task["repo"]),
+            "Project profile no longer owns this repository",
+        )?;
+        let observed = checkout::observe(task)?;
+        ensure(
+            !observed["currentBranch"].is_null()
+                && crate::paths::exists(Path::new(string(task, "path")))?,
+            "Label refresh requires an existing registered checkout with an attached local branch",
+        )?;
+        (task.clone(), receipt, settings, observed)
+    };
+    let task = &task;
     let mut current = task.clone();
     current["branch"] = observed["currentBranch"].clone();
     let template = settings.get("workspaceLabel").map(text).transpose()?;
@@ -134,30 +142,44 @@ pub fn refresh(paths: &Paths, id: &str, progress: &crate::progress::Progress) ->
     )?;
     let workspace = workspace.unwrap();
     let check = || -> Result<()> {
+        let current_receipt =
+            records::setup_for(&paths.state, task["socket"].as_str(), string(task, "path"))?;
         ensure(
             records::task(&paths.state, id)?.value() == task
                 && config::settings(paths, string(task, "project"))? == settings
+                && current_receipt.as_ref().map(records::Setup::value)
+                    == receipt.as_ref().map(records::Setup::value)
                 && checkout::observe(task)?["currentBranch"] == observed["currentBranch"],
-            "Task, profile or current branch changed during label refresh; review and refresh again",
-        )
+            "Task, setup, profile or current branch changed during label refresh; review and refresh again",
+        )?;
+        require_unique_owner(paths, task)
     };
-    check()?;
-    if label != workspace.label {
-        progress.run("refresh-label", id, || {
-            herdr::request(
-                task["socket"].as_str(),
-                "workspace.rename",
-                json!({"workspace_id": workspace.workspace_id, "label": label}),
-                Duration::from_secs(60),
-            )
-        })?;
+    {
+        let _state_lock = locks::state(paths)?;
         check()?;
+        // Inventory reads may wait without blocking the registry. Keep the actual
+        // rename serialized: Herdr has no conditional ownership guard on this RPC.
+        if label != workspace.label {
+            progress.run("refresh-label", id, || {
+                herdr::request(
+                    task["socket"].as_str(),
+                    "workspace.rename",
+                    json!({"workspace_id": workspace.workspace_id, "label": label}),
+                    Duration::from_secs(60),
+                )
+            })?;
+            check()?;
+        }
+    }
+    if label != workspace.label {
         let latest_spaces = list(task)?;
         ensure(
             owned(task, &latest_spaces)?.is_some_and(|w| w.label == label)
                 && unique(task, &latest_spaces),
             "Workspace label refresh was not verified; inspect Herdr and refresh again",
         )?;
+        let _state_lock = locks::state(paths)?;
+        check()?;
     }
     Ok(
         json!({"id": id, "status": if label == workspace.label {"unchanged"} else {"refreshed"}, "workspaceId": task["workspaceId"], "branch": observed["currentBranch"], "recordedBranch": task["branch"], "label": label}),

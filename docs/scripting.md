@@ -7,8 +7,8 @@ Part of the [Graftr guide](../README.md).
 Public commands are human-readable by default, including create/setup/open,
 cleanup/removal, health, labels, freeze/thaw/scheduling and plugin installation.
 Scripts and agents must explicitly request `--json`; output is never switched to
-JSON automatically when redirected. Existing JSON envelope versions, exit codes
-and safety/confirmation checks are unchanged.
+JSON automatically when redirected. Envelope versions and safety/confirmation
+checks are unchanged; incomplete status/list reports follow the contract below.
 
 Human tables use the terminal width: status first wraps long project/task names and
 addresses inside their columns, keeping Address in the table when readable columns fit.
@@ -75,6 +75,15 @@ traces, subprocess output, or private dotenv contents.
 | `cancelled` | The user declined confirmation; no lifecycle mutation was attempted. | 0 / true |
 | `failed` | An error occurred before a tracked lifecycle mutation, or application health checks failed. | 1 / false |
 | `partial` | Setup is incomplete/unmanaged, or a lifecycle mutation was attempted before an error. | 1 / false |
+
+For `status` and `list`, `partial` also means individual record files could not be
+validated. These read-only commands keep validated rows in `data` and add
+`data.recordIssues` with relative `path`, `code: "INVALID_RECORD"` and a generic
+`message`. The envelope error is `RECORDS_INCOMPLETE`. An omitted record may still
+own resources: do not treat a partial inventory as permission to allocate, adopt,
+or delete. Healthy reports are unchanged. Unsafe category directories and other
+report-wide failures still return `failed` with null data. See
+[incomplete reporting](diagnosis.md#incomplete-status-and-inventory).
 
 Always inspect `outcome`: `ok: true` means the invocation was handled successfully,
 not necessarily that the requested worktree is ready or removed. Queued results keep

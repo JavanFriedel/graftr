@@ -130,6 +130,35 @@ sys.exit(code)
         self.assertEqual(after["state"], "copied")
         self.assertTrue(any(call["input"].startswith("DROP DATABASE") for call in state["calls"]))
 
+    def test_database_assignments_are_replaced_once_and_local_syntax_is_preserved(self):
+        self.managed()
+        kept = b"SECRET='synthetic-local ${PORT} # literal' # retained\r\n"
+        self.original = (b"DATABASE_URL='postgres://old/development'\r\n" + kept
+                         + b"POSTGRES_DB=development\r\nDATABASE_URL=shadow\r\nPOSTGRES_DB=shadow\r\n")
+        result, owned, _ = self.pair("afterEnvironment")
+        self.assertEqual(result, (0, "", ""))
+        contents = self.target.read_bytes()
+        self.assertIn(kept, contents)
+        self.assertEqual(contents.count(b"DATABASE_URL="), 1)
+        self.assertEqual(contents.count(b"POSTGRES_DB="), 1)
+        self.assertNotIn(b"shadow", contents)
+        self.assertTrue(contents.startswith(b"DATABASE_URL='postgresql://"))
+        self.original = contents
+        result, _, state = self.pair("afterEnvironment", owned, databases=["development", owned["database"]])
+        self.assertEqual(result[0], 0)
+        self.assertEqual(state["calls"], [])
+        self.assertEqual(self.target.read_bytes(), contents)
+
+    def test_invalid_environment_is_refused_before_database_side_effects(self):
+        self.managed()
+        self.original = b"SECRET='synthetic-private-unclosed\n"
+        result, owned, state = self.pair("afterEnvironment")
+        self.assertEqual(result[0], 1)
+        self.assertIsNone(owned)
+        self.assertEqual(state["calls"], [])
+        self.assertEqual(self.target.read_bytes(), self.original)
+        self.assertNotIn("synthetic-private-unclosed", str(result))
+
     def test_lost_create_reply_retains_intent_and_no_secret_is_logged(self):
         self.managed()
         result, owned, _ = self.pair("afterEnvironment", create_lost_reply=True)

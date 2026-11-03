@@ -172,6 +172,16 @@ The checkout/workspace is visible immediately; installation completes in an inde
 Herdr one-shot worker. The workspace is grouped beneath the parent without moving focus. The `agent`,
 `editor`, `terminal`, and `server` tabs are ordinary shells.
 
+For a new configured Herdr checkout, parent-workspace discovery runs outside the
+global registry lock. Before registering a parent or creating the checkout, Graftr
+rechecks the project/policy, target-related task/adoption/frozen/setup records,
+canonical destination, relevant Git registrations and branch tip under that lock.
+A changed target requires review and a fresh request, not an automatic retry or
+opening a task that another creator just claimed. Unrelated worktrees may proceed
+during discovery. Parent registration, its post-registration verification and actual
+checkout creation remain serialized; unconfigured native fallback and existing-task
+reopening retain their previous locking behavior. No discovery plan is persisted.
+
 By default, managed workspace labels put the secondary port first
 when assigned, otherwise the local port: for example `5200 fix login` or
 `3200 fix login`, rather than repeating the parent project's name. The port
@@ -216,11 +226,19 @@ environment refresh, retain their recorded-branch rules; this is not automatic
 retasking or environment migration. Use the folder/path/full ID or recorded branch
 to target the checkout—the new label/current branch is not a new selector alias.
 
-Refresh is one-shot, not a branch watcher. It rechecks branch/record/profile/workspace
+Refresh is one-shot, not a branch watcher. It rechecks branch/record/setup/profile/workspace
 identity and verifies the returned live label. A failed/lost reply or late branch
 change can leave an already-updated label; JSON reports failed/partial with
 `refresh-label` completed/uncertain progress, without rollback or automatic retry.
 Inspect Herdr and deliberately refresh again. An already-correct label is a no-op.
+
+Herdr inventory reads run without holding the global registry lock, while the
+target's worktree lock remains held. After those reads, Graftr rechecks the task,
+setup receipt, profile, branch and unique ownership before trusting the result—even
+for an unchanged label or a successful rename's final verification. The rename
+itself stays serialized under the registry lock; Herdr has no conditional ownership
+guard on that mutation. This avoids blocking unrelated operations during inventory
+reads without treating a stale snapshot as permission to rename another workspace.
 
 Both creation providers share enrollment/environment/install/URL setup; tabs are
 attachment-only. Inside Herdr, CLI `create`, `setup`, and `open` queue setup by default,
@@ -281,6 +299,13 @@ The optional JSON receipt (`status: "closing"`, with `logId`) means **accepted**
 completed; the pane may close before it prints. From another workspace, inspect
 `graftr status` and `herdr plugin log list --plugin local.graftr` if cleanup fails.
 Explicit close from another workspace and native plugin close actions complete directly.
+
+Direct close reads Herdr inventory without holding the global registry lock, then
+rechecks the task, setup receipt and unique ownership before cancelling setup,
+queuing cleanup or closing the workspace. A concurrent change requires review and
+a fresh close request; it does not cancel a newer setup from a stale snapshot.
+The actual close request stays serialized. Pending setup is fenced before any wait
+for the installer's worktree lock; this does not claim to terminate that installer.
 
 Herdr workspace actions expose **Set up worktree / retry setup**, **Set up worktree
 (skip dependency install)**, **Open / prepare worktree (full setup)**, **Run worktree
@@ -419,6 +444,12 @@ native automatic enrollment for an entire project; CLI create and manual setup r
 explicit opt-ins. Completely unconfigured repositories stay outside automatic state;
 their fallback appears in the hook log. Existing unmanaged worktrees stay untouched
 until explicit setup, even if automatic setup is subsequently enabled.
+
+Skipping setup does not bypass registry locking or branch/path reservations. Plain
+creation waits for the same registry lock as managed creation and checks the current
+reservations after acquiring it. Its creation intent remains active until the skip
+receipt is saved, so an early Herdr creation event can return without waiting on
+that lock or accidentally running setup.
 
 An optional `installCommand` is an approved **argv array**, not inferred from a checkout
 script or passed through a shell. It runs once after environment verification, with public

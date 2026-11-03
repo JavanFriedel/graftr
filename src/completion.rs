@@ -126,7 +126,12 @@ pub fn complete(paths: &Paths, words: &[String], catalog: &Catalog) -> Result<Ve
             catalog
                 .public_commands()
                 .into_iter()
-                .chain(["--help".into(), "-h".into()])
+                .chain([
+                    "--help".into(),
+                    "-h".into(),
+                    "--version".into(),
+                    "-V".into(),
+                ])
                 .collect(),
         ));
     }

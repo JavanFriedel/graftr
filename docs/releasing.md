@@ -16,7 +16,11 @@ Other operating systems/architectures are not implied by a successful build.
 rebuilds the executable, and refuses to overwrite existing release assets. It uses
 Python 3.10+, Cargo and the matching `rust-docs` license component as release tooling,
 not runtime dependencies. The archive includes project/dependency/Rust-library notices,
-the executable, completion and plugin manifest. `RELEASE.json` records source revision,
+the executable, completion and plugin manifest. Packaging sets the compile-time
+`GRAFTR_SOURCE_REVISION` to the clean checkout's commit and requires
+`graftr --version --json` to match that revision and Cargo's version before creating
+an archive. Do not set this variable for ordinary dirty/unverified local builds.
+`RELEASE.json` records source revision,
 version, target and each payload file's SHA-256. No local paths, credentials, profiles,
 task state or benchmark results belong in release artifacts.
 

@@ -1,10 +1,13 @@
 import hashlib
 import importlib.util
 import json
+import os
 from pathlib import Path
+import sys
 import tarfile
 import tempfile
 import unittest
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -63,6 +66,38 @@ class ReleaseTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "overwrite"):
             self.package()
         self.assertEqual(archive.read_bytes(), previous)
+
+    def test_release_stamps_and_checks_the_executable_before_packaging(self):
+        revision = "a" * 40
+        def output(args, **kwargs):
+            if args[:2] == ["git", "status"]:
+                return b""
+            if args[:2] == ["git", "rev-parse"]:
+                return revision + "\n"
+            if args[:2] == ["cargo", "metadata"]:
+                return json.dumps(self.metadata).encode()
+            if args[-2:] == ["--version", "--json"]:
+                return json.dumps({"outcome": "completed", "data": reported}).encode()
+            if args[-2:] == ["--print", "sysroot"]:
+                return str(self.root) + "\n"
+            if args[:2] == ["git", "show"]:
+                return "1767225600\n"
+            self.fail(f"Unexpected release command: {args}")
+        reported = {"version": "0.1.0", "sourceRevision": revision}
+        with patch.object(release, "ROOT", self.root), patch.object(sys, "argv", ["package-release.py", "--tag", "v0.1.0"]), \
+             patch.object(release.subprocess, "check_output", side_effect=output), \
+             patch.object(release.subprocess, "run") as build, patch.object(release, "package") as package, \
+             patch("builtins.print"), patch.dict(os.environ, {"GRAFTR_SOURCE_REVISION": "b" * 40}):
+            release.main()
+            self.assertEqual(build.call_args.kwargs["env"]["GRAFTR_SOURCE_REVISION"], revision)
+            package.assert_called_once()
+            package.reset_mock()
+            for reported in [{"version": "9.0.0", "sourceRevision": revision},
+                             {"version": "0.1.0", "sourceRevision": None},
+                             {"version": "0.1.0", "sourceRevision": "b" * 40}]:
+                with self.assertRaisesRegex(ValueError, "version/source revision"):
+                    release.main()
+                package.assert_not_called()
 
     def test_invalid_version_binary_or_missing_license_blocks_release(self):
         with self.assertRaisesRegex(ValueError, "version"):

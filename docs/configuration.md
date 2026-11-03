@@ -29,7 +29,7 @@ startup thaws. Unscheduled/future frozen tasks never return automatically at sta
 | `ports` | Omitted | Up to 16 extra named local port ranges, e.g. `{ "api": [3600, 3700] }`; each task leases one port per name. Names use lowercase letters, numbers and single hyphens (32 characters). |
 | `url` | Omitted | Public HTTP(S) origin template. It declares an address; publishing is up to hooks. |
 | `workspaceLabel` | Secondary port, else local port, then task name | Template for the managed Herdr workspace's display name. |
-| `envSource` | Omitted | Approved development baseline file named `.env`; copied privately into new worktrees. Omission disables dotenv management. |
+| `envSource` | Omitted | Approved development baseline file named `.env`; composed privately into new worktrees. Omission disables dotenv management. |
 | `envOverrides` | `{ "PORT": "{{localPort}}" }` | Public environment assignment templates, replacing rather than merging the default; `{}` disables generated assignments. |
 | `autoSetup` | `false` | Enroll new Herdr-native worktrees automatically. Explicit CLI setup does not require this flag. |
 | `installCommand` | Omitted | Approved one-shot installer as an argv array, such as `["pnpm", "install", "--frozen-lockfile"]`; no command means manual installation. |
@@ -190,7 +190,7 @@ it does not load the application's parser or validate application-specific env e
 
 An optional `envOverrides` map replaces the generated assignment list completely.
 It is **not merged** with Graftr's defaults; baseline values not named in the map
-are still copied unchanged. For example, a project's profile can include:
+are retained using their original assignment syntax. For example, a project's profile can include:
 
 ```json
 "envOverrides": {
@@ -203,10 +203,28 @@ are still copied unchanged. For example, a project's profile can include:
 ```
 
 Omitting the map generates only `PORT`. An explicit empty map (`"envOverrides": {}`)
-copies the baseline without generated assignments. Every task record stores the map it
+composes the baseline without generated assignments. Every task record stores the map it
 was prepared with.
 It does **not** automatically adapt the application's listening port: include the
 variables your application needs to use its assigned local port and URL.
+
+When generating a missing `.env`, Graftr parses the baseline in memory and writes
+one assignment per key. Repeated baseline keys resolve to their **last declaration**;
+configured keys replace the first old declaration and remove any duplicates. Only
+missing configured keys are appended, in sorted order. This avoids relying on the
+application loader's first/last-assignment precedence. Untouched winning assignments
+retain raw quoting, multiline content, comments and interpolation syntax; Graftr
+does not expand references, execute shell expressions, or re-encode secret values.
+References still depend on the application's loader and assignment ordering.
+
+Generation accepts supported ordinary dotenv syntax (`export`, `=`/colon
+assignments, comments, single/double/backtick quotes and multiline values), with
+valid UTF-8 and a 4 MiB limit. Unsupported or malformed documents stop setup before
+writing `.env`; errors do not include contents. Output remains private and atomic,
+and the source file is not changed. Routine setup/open **never normalizes or rewrites
+an existing `.env`**, including older files containing duplicate assignments. Use
+explicit [environment refresh](diagnosis.md#guided-development-environment-refresh)
+to replace selected non-managed keys, or review managed assignments privately.
 
 Supported placeholders are `{{localPort}}`, `{{httpsPort}}`, `{{port.NAME}}`, `{{url}}`, `{{host}}`,
 `{{worktreeName}}` (checkout folder name), `{{worktreePath}}` (absolute checkout path),

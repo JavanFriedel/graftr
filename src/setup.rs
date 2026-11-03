@@ -12,6 +12,7 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{
     env, fs,
+    io::Read,
     path::Path,
     time::{Duration, Instant},
 };
@@ -45,6 +46,11 @@ struct CreationSource {
     path: Option<String>,
     workspace: Option<String>,
     fallback: bool,
+    settings: Option<Object>,
+}
+enum CreationParent {
+    Existing(String),
+    Register(String),
 }
 fn inside(child: &str, parent: &str) -> bool {
     child == parent
@@ -158,14 +164,8 @@ impl Engine<'_> {
                 self.wait_for_standalone_setup(string(task.value(), "path"))?;
             }
         }
-        let result = if options.no_setup {
-            self.create_locked(project, name, base, options, socket.as_deref(), &mut timing)?
-        } else {
-            let waiting = Instant::now();
-            let _lock = locks::state(self.paths)?;
-            add(&mut timing, "stateLockWait", waiting);
-            self.create_locked(project, name, base, options, socket.as_deref(), &mut timing)?
-        };
+        let result =
+            self.create_locked(project, name, base, options, socket.as_deref(), &mut timing)?;
         self.finish_request(result, options)
     }
     fn create_locked(
@@ -177,6 +177,10 @@ impl Engine<'_> {
         socket: Option<&str>,
         timing: &mut Value,
     ) -> Result<SetupResult> {
+        let waiting = Instant::now();
+        // Skipping setup still checks reservations and writes intents/receipts.
+        let state_lock = locks::state(self.paths)?;
+        add(timing, "stateLockWait", waiting);
         let id = format!("{project}--{name}");
         ensure(!records::adoptions(&self.paths.state)?.iter().any(|r| r.value()["id"] == id), Error {code: "ADOPTED_EXTERNAL", message: "This worktree is tracked with external setup. Use graftr adopt PATH for explicit setup stages; automatic setup, cleanup, removal and freeze are not enabled for adopted worktrees. Existing files and manual services were preserved.".into()})?;
         let frozen: Vec<_> = records::frozen(&self.paths.state)?
@@ -320,14 +324,23 @@ impl Engine<'_> {
             )?;
             None
         };
-        let parent = if let Some(socket) = socket {
-            Some(if source.fallback {
-                source.workspace.clone().unwrap()
-            } else {
-                self.creation_parent(socket, &source.repo)?
-            })
-        } else {
-            None
+        let (_state_lock, parent) = match socket {
+            Some(socket) if !source.fallback => {
+                let context = self.creation_context(project, &id, &source)?;
+                drop(state_lock);
+                let parent = self.discover_creation_parent(socket, &source.repo)?;
+                let waiting = Instant::now();
+                let lock = locks::state(self.paths)?;
+                add(timing, "stateLockWait", waiting);
+                ensure(
+                    self.creation_context(project, &id, &source)? == context,
+                    "Creation target changed during parent discovery; review the current reservations, checkout and branch before retrying",
+                )?;
+                let parent = self.register_creation_parent(socket, &source.repo, parent)?;
+                (lock, Some(parent))
+            }
+            Some(_) => (state_lock, Some(source.workspace.clone().unwrap())),
+            None => (state_lock, None),
         };
         if let Some(path) = &source.path {
             self.require_creation_path(path)?;
@@ -499,6 +512,65 @@ impl Engine<'_> {
         cleanup?;
         result
     }
+    fn creation_context(&self, project: &str, id: &str, source: &CreationSource) -> Result<Value> {
+        let path = source.path.as_deref().expect("configured creation path");
+        self.require_creation_path(path)?;
+        let settings = crate::config::settings(self.paths, project)?;
+        ensure(
+            source.settings.as_ref() == Some(&settings),
+            "Project creation settings changed; review the profile before retrying",
+        )?;
+        let mode = profiles::herdr_mode(self.paths)?;
+        ensure(
+            mode != "off",
+            "Herdr policy changed before creation; review the configuration before retrying",
+        )?;
+        let related = |record: &Value, branch_field: &str| {
+            record["id"] == id
+                || record["repo"] == source.repo && record[branch_field] == source.branch
+                || record["path"].as_str().is_some_and(|record_path| {
+                    inside(path, record_path) || inside(record_path, path)
+                })
+        };
+        let tasks = records::tasks(&self.paths.state)?
+            .into_iter()
+            .filter(|r| related(r.value(), "branch"))
+            .map(|r| r.value().clone())
+            .collect::<Vec<_>>();
+        let adopted = records::adoptions(&self.paths.state)?
+            .into_iter()
+            .filter(|r| related(r.value(), "branch"))
+            .map(|r| r.value().clone())
+            .collect::<Vec<_>>();
+        let frozen = records::frozen(&self.paths.state)?
+            .into_iter()
+            .filter(records::Frozen::reserves)
+            .filter(|r| related(&r.value()["removal"], "currentBranch"))
+            .map(|r| r.value().clone())
+            .collect::<Vec<_>>();
+        let setups = records::setups(&self.paths.state)?
+            .into_iter()
+            .filter(|r| r.value()["path"] == path)
+            .map(|r| r.value().clone())
+            .collect::<Vec<_>>();
+        let registered = inventory::registered(&source.repo)?
+            .into_iter()
+            .filter(|tree| {
+                tree.branch.as_deref() == Some(source.branch.as_str())
+                    || tree.path == path
+                    || tree.path != source.repo
+                        && (inside(path, &tree.path) || inside(&tree.path, path))
+            })
+            .collect::<Vec<_>>();
+        // Only target-related state is fenced, so unrelated creations may finish
+        // during discovery. No plan, reservation or private context is persisted.
+        Ok(
+            json!({"settings": settings, "mode": mode, "tasks": tasks, "adopted": adopted,
+            "frozen": frozen, "setups": setups, "registered": registered,
+            "present": paths::exists(Path::new(path))?,
+            "branchCommit": crate::branches::local_commit(&source.repo, &source.branch)?}),
+        )
+    }
     fn creation_source(
         &self,
         project: &str,
@@ -556,6 +628,7 @@ impl Engine<'_> {
             path: Some(path),
             workspace: None,
             fallback: false,
+            settings: Some(settings),
         })
     }
     fn fallback_source(
@@ -590,6 +663,7 @@ impl Engine<'_> {
             path: None,
             workspace: Some(workspace),
             fallback: true,
+            settings: None,
         })
     }
     fn require_creation_path(&self, path: &str) -> Result<()> {
@@ -613,13 +687,17 @@ impl Engine<'_> {
         Ok(matches[0].workspace_id.clone())
     }
     fn creation_parent(&self, socket: &str, repo: &str) -> Result<String> {
+        let parent = self.discover_creation_parent(socket, repo)?;
+        self.register_creation_parent(socket, repo, parent)
+    }
+    fn discover_creation_parent(&self, socket: &str, repo: &str) -> Result<CreationParent> {
         let matches: Vec<_> = self
             .workspaces(socket)?
             .into_iter()
             .filter(|w| w.checkout_path.as_deref() == Some(repo))
             .collect();
         if matches.len() == 1 {
-            return Ok(matches[0].workspace_id.clone());
+            return Ok(CreationParent::Existing(matches[0].workspace_id.clone()));
         }
         ensure(
             matches.len() <= 1,
@@ -644,6 +722,18 @@ impl Engine<'_> {
                 "Calling workspace is not the configured parent repository {repo}; run creation from that repository's existing workspace"
             ),
         )?;
+        Ok(CreationParent::Register(workspace))
+    }
+    fn register_creation_parent(
+        &self,
+        socket: &str,
+        repo: &str,
+        parent: CreationParent,
+    ) -> Result<String> {
+        let workspace = match parent {
+            CreationParent::Existing(workspace) => return Ok(workspace),
+            CreationParent::Register(workspace) => workspace,
+        };
         let reply = self.progress.run("register-parent", repo, || {
             herdr::request(
                 Some(socket),
@@ -1598,19 +1688,18 @@ impl Engine<'_> {
             if !paths::exists(&target)? {
                 self.progress
                     .run("write-environment", string(task, "id"), || {
-                        let mut bytes = fs::read(source).map_err(|_| {
-                            Error::from(
-                                "Could not read environment baseline; contents were not logged",
-                            )
-                        })?;
-                        bytes.extend_from_slice(
-                            b"\n\n# Worktree-specific values managed by graftr.\n",
-                        );
-                        for (key, value) in overrides.as_object().unwrap() {
-                            bytes.extend_from_slice(
-                                format!("{key}={}\n", value.as_str().unwrap()).as_bytes(),
-                            );
-                        }
+                        let mut baseline = Vec::new();
+                        fs::File::open(source)
+                            .and_then(|file| {
+                                file.take((envdoc::MAX_BYTES + 1) as u64)
+                                    .read_to_end(&mut baseline)
+                            })
+                            .map_err(|_| {
+                                Error::from(
+                                    "Could not read environment baseline; contents were not logged",
+                                )
+                            })?;
+                        let bytes = envdoc::compose(&baseline, &overrides)?;
                         stateio::atomic_write(&target, &bytes, true)
                     })?;
             }

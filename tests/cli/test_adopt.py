@@ -106,6 +106,8 @@ class AdoptionTests(NativeCase):
         path = self.external()
         target = path / ".env"
         target.chmod(0o600)
+        with target.open("ab") as stream:
+            stream.write(b"LOCAL=first\nSECRET=synthetic-shadow\nLOCAL=last\n")
         baseline = self.fixture.repo / ".env"
         baseline.write_text("PORT=3000\nBASE_URL=https://baseline.example.test\nSECRET=synthetic-rotated\nADDED='synthetic-new'\n")
         baseline.chmod(0o600)
@@ -123,7 +125,11 @@ class AdoptionTests(NativeCase):
             {"action": "refresh-environment", "target": "bench--external", "status": "completed"},
             {"action": "save-adoption", "target": "bench--external", "status": "completed"},
         ])
-        self.assertTrue(target.read_bytes().startswith(original))
+        contents = target.read_bytes()
+        self.assertTrue(contents.startswith(b"PORT=32123\nBASE_URL=https://external.example.test:5443\n"))
+        self.assertEqual(contents.count(b"SECRET="), 1)
+        self.assertIn(b"SECRET=synthetic-rotated\nLOCAL=first\nLOCAL=last\n", contents)
+        self.assertIn(b"ADDED='synthetic-new'\n", contents)
         for backup in (self.fixture.state / "env-backups").glob("*.env"):
             self.assertEqual(backup.read_bytes(), original)
             self.assertEqual(backup.stat().st_mode & 0o777, 0o600)

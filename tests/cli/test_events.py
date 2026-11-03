@@ -1,10 +1,13 @@
 import copy
+import fcntl
 import json
 from pathlib import Path
 import shutil
+import subprocess
 
 from test_cli import NativeCase
 from test_herdr_lifecycle import LifecycleHerdr
+from status_fixture import write_record
 import bench
 
 
@@ -155,3 +158,96 @@ class EventsTests(NativeCase):
             report["reconciliation"]["message"] = "<socket unavailable>"
             results.append(report)
         self.assertEqual(results[0], results[1])
+
+    def test_reconcile_releases_registry_lock_while_waiting_for_herdr(self):
+        self.configure()
+        self.assertEqual(self.invoke([str(self.native)], ["create", "bench", "sample", "--wait", "--json"], **self.env)[0], 0)
+        self.server.open = False
+        response = self.server.response
+        available = []
+        def probe(method, params):
+            if method == "workspace.list":
+                with (self.fixture.state / "operation.lock").open("r+") as lock:
+                    try:
+                        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        available.append(True)
+                    except BlockingIOError:
+                        available.append(False)
+            return response(method, params)
+        self.server.response = probe
+        result = self.invoke([str(self.native)], ["reconcile", "--json"])
+        self.assertEqual(result[0], 0, result)
+        self.assertEqual(available, [True])
+        self.assertEqual(json.loads((self.fixture.state / "bench--sample.json").read_text())["status"], "closed")
+        self.assertFalse(self.server.errors)
+
+    def test_plain_create_intent_suppresses_reentrant_and_late_auto_setup_events(self):
+        self.configure(auto=True)
+        response = self.server.response
+        events = []
+        def creating(method, params):
+            result = response(method, params)
+            if method == "worktree.create":
+                self.assertEqual(len(list((self.fixture.state / "creating").glob("*.json"))), 1)
+                event = self.snapshot()
+                child = subprocess.run([str(self.native), "_event"], cwd=self.fixture.repo,
+                                       env={**self.fixture.env, **self.env, "HERDR_PLUGIN_EVENT_JSON": json.dumps(event)},
+                                       stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=3)
+                events.append((child.returncode, child.stdout, child.stderr))
+            return result
+        self.server.response = creating
+        result = self.invoke([str(self.native)], ["create", "bench", "sample", "--no-setup", "--json"], **self.env)
+        self.assertEqual(result[0], 0, result)
+        self.assertEqual(result[1]["data"]["status"], "skipped")
+        self.assertEqual(events, [(0, "", "")])
+        self.assertEqual(self.event([str(self.native)], self.snapshot()), (0, "", ""))
+        self.assertFalse((self.fixture.state / "bench--sample.json").exists())
+        self.assertFalse((self.fixture.checkout / ".env").exists())
+        self.assertFalse((self.fixture.checkout / "node_modules").exists())
+        self.assertFalse(list((self.fixture.state / "creating").glob("*.json")))
+        receipts = list((self.fixture.state / "setup").glob("*.json"))
+        self.assertEqual(len(receipts), 1)
+        self.assertEqual(json.loads(receipts[0].read_text())["status"], "skipped")
+        self.assertFalse(self.server.errors)
+
+    def test_reconcile_refuses_changed_snapshot_before_any_closure(self):
+        for kind in ("task", "setup", "added", "removed"):
+            with self.subTest(kind=kind):
+                self.fresh()
+                self.configure()
+                self.assertEqual(self.invoke([str(self.native)], ["create", "bench", "sample", "--wait", "--json"], **self.env)[0], 0)
+                path = self.fixture.state / "bench--sample.json"
+                task = json.loads(path.read_text())
+                receipt_path = next((self.fixture.state / "setup").glob("*.json"))
+                receipt = json.loads(receipt_path.read_text())
+                newer = copy.deepcopy(receipt if kind == "setup" else task)
+                if kind == "task":
+                    newer["status"] = "cleaned"
+                elif kind == "setup":
+                    newer["message"] = "Newer setup observation"
+                elif kind == "added":
+                    newer["id"] = "bench--added"
+                self.server.open = False
+                response = self.server.response
+                def change(method, params):
+                    if method == "workspace.list":
+                        with (self.fixture.state / "operation.lock").open("r+") as lock:
+                            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                            if kind == "removed":
+                                path.unlink()
+                            else:
+                                destination = receipt_path if kind == "setup" else self.fixture.state / "bench--added.json" if kind == "added" else path
+                                write_record(destination, newer)
+                    return response(method, params)
+                self.server.response = change
+                result = self.invoke([str(self.native)], ["reconcile", "--json"])
+                self.assertEqual(result[0], 1, result)
+                self.assertIn("changed during reconciliation", result[1]["error"]["message"])
+                if kind == "removed":
+                    self.assertFalse(path.exists())
+                else:
+                    self.assertEqual(json.loads(path.read_text()), newer if kind == "task" else task)
+                self.assertEqual(json.loads(receipt_path.read_text()), newer if kind == "setup" else receipt)
+                if kind == "added":
+                    self.assertEqual(json.loads((self.fixture.state / "bench--added.json").read_text()), newer)
+                self.assertFalse(self.server.errors)

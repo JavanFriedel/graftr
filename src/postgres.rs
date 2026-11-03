@@ -286,34 +286,42 @@ fn write(directory: &Path, record: &Value) -> Result<()> {
         false,
     )
 }
-fn point_environment(task: &Value, source: &Source, database: &str) -> Result<()> {
+fn environment_content(
+    task: &Value,
+    source: &Source,
+    database: &str,
+    current: &[u8],
+) -> Result<Vec<u8>> {
     let overrides = task["overrides"].as_object().unwrap();
     ensure(
         !overrides.contains_key("DATABASE_URL") && !overrides.contains_key("POSTGRES_DB"),
         "envOverrides must not manage DATABASE_URL or POSTGRES_DB when the Postgres hook owns them",
     )?;
-    let path = Path::new(string(task, "path")).join(".env");
-    let current = records::read_private(&path)?;
-    let current = String::from_utf8_lossy(&current);
     let url = with_database(&source.full, database);
-    let values = envdoc::loose(current.as_bytes());
-    if values.get("DATABASE_URL") == Some(&url)
-        && values.get("POSTGRES_DB").map(String::as_str) == Some(database)
-    {
-        return Ok(());
-    }
     ensure(
         !url.chars()
             .chain(database.chars())
             .any(|c| ['\'', '\n', '\r'].contains(&c)),
         "The task database URL cannot be written as a single-quoted dotenv value",
     )?;
-    let separator = if !current.is_empty() && !current.ends_with('\n') {
-        "\n"
-    } else {
-        ""
-    };
-    stateio::atomic_write(&path, format!("{current}{separator}# graftr hook postgres: this task's own copy of the development database\nDATABASE_URL='{url}'\nPOSTGRES_DB='{database}'\n").as_bytes(), false)
+    envdoc::replace(
+        current,
+        &[
+            ("DATABASE_URL".into(), format!("DATABASE_URL='{url}'")),
+            ("POSTGRES_DB".into(), format!("POSTGRES_DB='{database}'")),
+        ]
+        .into(),
+        "# graftr hook postgres: this task's own copy of the development database",
+    )
+}
+fn point_environment(task: &Value, source: &Source, database: &str) -> Result<()> {
+    let path = Path::new(string(task, "path")).join(".env");
+    let current = records::read_private(&path)?;
+    let content = environment_content(task, source, database, &current)?;
+    if content == current {
+        return Ok(());
+    }
+    stateio::atomic_write(&path, &content, false)
 }
 pub fn hook(paths: &Paths) -> Result<()> {
     let phase = env::var("GRAFTR_HOOK_PHASE").unwrap_or_default();
@@ -386,6 +394,13 @@ pub fn hook(paths: &Paths) -> Result<()> {
         owned["state"] = json!("dropped");
         return write(&directory, &owned);
     }
+    // Refuse an uncomposable environment before creating or copying a database.
+    environment_content(
+        task,
+        &source,
+        string(&desired, "database"),
+        &records::read_private(&Path::new(string(task, "path")).join(".env"))?,
+    )?;
     ensure(
         !owned.as_ref().is_some_and(|r| r["state"] == "dropped"),
         "This task's database was already dropped; create a new task for a fresh copy",

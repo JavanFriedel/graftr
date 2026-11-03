@@ -178,9 +178,11 @@ large database (the default is 60 seconds, the maximum 600000 ms):
 In `afterEnvironment` the hook reads `DATABASE_URL` from the profile's `envSource`
 baseline (a `postgres://` or `postgresql://` URL), creates `<database>_<taskSlug>`
 (shortened with a hash past Postgres's 63-byte limit), copies the development database
-into it with `pg_dump | psql`, and appends `DATABASE_URL` and `POSTGRES_DB` for the
-task's database to the worktree's private `.env` (dotenv's last assignment wins, and
-the baseline bytes stay a prefix). The password travels only through `PGPASSWORD`,
+into it with `pg_dump | psql`, and replaces `DATABASE_URL` and `POSTGRES_DB` in the
+worktree's private `.env` with one assignment each for the task's database. Existing
+occurrences are replaced in place and duplicates removed; missing keys are appended.
+Unrelated raw syntax is preserved, not expanded or executed. Unsupported environment
+syntax is refused before database creation/copy. The password travels only through `PGPASSWORD`,
 never in argv, records or output. It refuses to adopt an existing database with the
 task's name, and `envOverrides` must not also manage `DATABASE_URL` or `POSTGRES_DB`.
 Retries are idempotent; a partial or uncertain copy is dropped and recreated.

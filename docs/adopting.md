@@ -84,7 +84,10 @@ are not repaired. Public port/URL keys and declared assignment keys are protecte
 adoption will not replace them or invent missing address assignments.
 
 Apply adds missing non-address keys and preserves existing differences unless
-explicitly selected with `--take-baseline`. No keys are removed. Exact original
+explicitly selected with `--take-baseline`. Selected keys are replaced in place
+using the last baseline declaration's raw syntax, collapsing all their duplicates
+even when the last value matches. Unselected bytes and duplicate keys are preserved;
+no keys are removed or references expanded. Exact original
 bytes are backed up privately outside Git, then the files and configuration are
 rechecked before replacement. Only key names/statuses/actions appear in reports.
 Backups contain secrets and use the existing retention/pruning policy. Stop external

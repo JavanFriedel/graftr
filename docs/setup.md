@@ -2,6 +2,61 @@
 
 Part of the [Graftr guide](../README.md).
 
+## Prebuilt release
+
+The [release page](https://github.com/JavanFriedel/graftr/releases) provides Linux
+x86_64 GNU archives built on Ubuntu 22.04. Other platforms are not currently
+published or validated. Git and compatible Linux system libraries are required;
+Rust, Bun, Node and Python are not needed to run a prebuilt release.
+
+For a **new installation**, the following downloads the explicit v0.1.0 archive,
+checks its reviewed SHA-256 before extraction, keeps the license notices alongside
+the executable, and creates a non-overwriting launcher link:
+
+```sh
+(
+  set -eu
+  download=$(mktemp -d)
+  trap 'rm -rf -- "$download"' EXIT
+  cd "$download"
+  archive=graftr-v0.1.0-x86_64-unknown-linux-gnu.tar.gz
+  curl -fL --output "$archive" "https://github.com/JavanFriedel/graftr/releases/download/v0.1.0/$archive"
+  printf '%s  %s\n' '07e09d4ddbd038aa7c10fbb0bc73f5d038524219f8f5a0be3fbf97e1ed25e998' "$archive" | sha256sum --check
+  tar -xzf "$archive"
+  destination="$HOME/.local/share/graftr/releases/0.1.0"
+  test ! -e "$destination" && test ! -L "$destination"
+  mkdir -p -- "$(dirname -- "$destination")" "$HOME/.local/bin"
+  mv -T -- graftr-v0.1.0-x86_64-unknown-linux-gnu "$destination"
+  ln -s -- "$destination/graftr" "$HOME/.local/bin/graftr"
+) && graftr --help
+```
+
+Ensure `~/.local/bin` is on PATH. This uses curl, GNU tar/coreutils and a shell as
+installation tools, not Graftr runtime dependencies. Existing destinations/launcher
+links cause failure rather than silently replacing another installation. If linking
+fails, the verified release directory remains available for inspection.
+If an existing package manager or dotfiles setup owns `graftr`, use that owner's
+upgrade process instead; do not overwrite its launcher.
+
+For upgrades, review a new release and its checksums, install into a **new version
+directory**, then deliberately switch your launcher. Keep older executable paths
+needed by running workers and saved timers. Do not simply change the version in this
+example without also reviewing/updating the checksum. The adjacent `SHA256SUMS` file
+detects transfer corruption but is not an independent trust anchor.
+
+### Version identification
+
+Source builds now support `graftr --version` (alias `-V`) for a human-readable version,
+or `graftr --version --json` for the standard JSON envelope with `data.version` and
+`data.sourceRevision`. These commands neither read configuration/state nor invoke Git.
+Release packaging embeds the exact source commit and checks the executable's report
+before packaging. Ordinary source builds leave `sourceRevision` null rather than
+guessing a commit from the directory where Graftr happens to run.
+
+The published **v0.1.0 does not have this flag**. For that release, inspect
+`RELEASE.json` in its archive/installation directory for version and source revision.
+The flag will be included in the next release; existing releases are never overwritten.
+
 ## Native build and installation
 
 Use `./build.sh` from a checkout to build, smoke-check and atomically publish

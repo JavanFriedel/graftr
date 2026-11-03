@@ -50,12 +50,22 @@ class StatusTests(NativeCase):
             if key == "socket":
                 record["workspaceId"] = "foreign"
             write_record(path, record)
-            self.assert_refused(["status", "--json"])
+            self.assert_refused(["status", "--json"], partial=True)
         write_record(path, original)
         self.compare(["status", "--json"])
 
-    def assert_refused(self, args):
+    def assert_refused(self, args, partial=False):
         before = bench.readonly_snapshot(self.fixture)
+        if partial:
+            actual = self.invoke([str(self.native)], args)
+            self.assertEqual(actual[0], 1, actual)
+            self.assertFalse(actual[1]["ok"])
+            self.assertEqual(actual[1]["outcome"], "partial")
+            self.assertEqual(actual[1]["error"]["code"], "RECORDS_INCOMPLETE")
+            self.assertEqual(len(actual[1]["data"]["recordIssues"]), 1)
+            self.assertNotIn("synthetic-secret-marker", json.dumps(actual))
+            self.assertEqual(bench.readonly_snapshot(self.fixture), before)
+            return
         expected = self.invoke(self.reference, args)
         actual = self.invoke([str(self.native)], args)
         self.assertEqual(expected[0], 1, expected)
@@ -97,7 +107,7 @@ class StatusTests(NativeCase):
                 node = node[key]
             node[keys[-1]] = value
             write_record(path, record)
-            self.assert_refused(["status", "--json"])
+            self.assert_refused(["status", "--json"], partial=True)
             write_record(path, original)
 
     def test_adoption_and_frozen_corruption_is_refused(self):
@@ -116,7 +126,7 @@ class StatusTests(NativeCase):
             record = copy.deepcopy(original)
             record[key] = value
             write_record(path, record)
-            self.assert_refused(["status", "--json"])
+            self.assert_refused(["status", "--json"], partial=True)
             if kind == "frozen":
                 self.assert_refused(["frozen", "other", "--json"])
             write_record(path, original)
@@ -126,17 +136,17 @@ class StatusTests(NativeCase):
         for kind in files:
             path = files[kind][0]
             path.chmod(0o644)
-            self.assert_refused(["status", "--json"])
+            self.assert_refused(["status", "--json"], partial=True)
             path.chmod(0o600)
             moved = path.with_name("moved-original")
             path.rename(moved)
             path.symlink_to(moved.name)
-            self.assert_refused(["status", "--json"])
+            self.assert_refused(["status", "--json"], partial=True)
             path.unlink()
             moved.rename(path)
             wrong = path.with_name("bench--wrong.json")
             path.rename(wrong)
-            self.assert_refused(["status", "--json"])
+            self.assert_refused(["status", "--json"], partial=True)
             wrong.rename(path)
         for name in ("setup", "adopted", "frozen"):
             directory = self.fixture.state / name
@@ -155,7 +165,7 @@ class StatusTests(NativeCase):
             result = self.compare(["status", "--json"])
             self.assertNotIn("synthetic-secret-marker", json.dumps(result))
             path.write_text('{"password":"synthetic-secret-marker" INVALID}')
-            self.assert_refused(["status", "--json"])
+            self.assert_refused(["status", "--json"], partial=True)
             path.write_bytes(original)
 
     def test_frozen_does_not_inspect_tasks_and_human_status_skips_history(self):
@@ -220,5 +230,5 @@ class StatusTests(NativeCase):
             record = copy.deepcopy(original)
             record["envOverrides"] = value
             write_record(path, record)
-            self.assert_refused(["status", "--json"])
+            self.assert_refused(["status", "--json"], partial=True)
         write_record(path, original)
