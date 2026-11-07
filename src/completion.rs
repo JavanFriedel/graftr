@@ -89,6 +89,10 @@ pub fn complete(paths: &Paths, words: &[String], catalog: &Catalog) -> Result<Ve
                 "until",
                 "note",
                 "hook",
+                "to",
+                "include",
+                "approve-project",
+                "destination-config",
             ]
             .contains(key)
         });
@@ -171,7 +175,10 @@ pub fn complete(paths: &Paths, words: &[String], catalog: &Catalog) -> Result<Ve
                 .command_flags(command.unwrap_or(""))
                 .into_iter()
                 .filter(|flag| {
-                    !used.contains(flag) || flag == "--take-baseline" || flag == "--hook"
+                    !used.contains(flag)
+                        || flag == "--take-baseline"
+                        || flag == "--hook"
+                        || flag == "--include"
                 })
                 .collect(),
         ));
@@ -385,7 +392,7 @@ pub fn complete(paths: &Paths, words: &[String], catalog: &Catalog) -> Result<Ve
             },
         ]);
     }
-    if ["logs", "doctor"].contains(&command) {
+    if ["logs", "doctor", "transfer"].contains(&command) {
         candidates.extend(
             records::adoptions(&paths.state)?
                 .iter()

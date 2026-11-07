@@ -1008,6 +1008,56 @@ impl Engine<'_> {
         };
         self.run(queued)
     }
+    pub(crate) fn prepare_transferred(&self, path: &str, options: &Options) -> Result<SetupResult> {
+        if let Some(task) = records::tasks(&self.paths.state)?
+            .iter()
+            .find(|t| t.value()["path"] == path)
+        {
+            return self.open(string(task.value(), "id"), options);
+        }
+        let socket = self.integration_socket(options, None)?;
+        let workspace = if let Some(socket) = socket.as_deref() {
+            let spaces = self.workspaces(socket)?;
+            if let Some(workspace) = spaces
+                .into_iter()
+                .find(|w| w.checkout_path.as_deref() == Some(path))
+            {
+                Some(workspace)
+            } else {
+                let repo = options
+                    .expected_repo
+                    .as_deref()
+                    .ok_or("Transferred setup requires a repository identity")?;
+                let parent = self.creation_parent(socket, repo)?;
+                let reply = self.progress.run("open-workspace", path, || {
+                    herdr::request(Some(socket), "worktree.open", json!({"workspace_id":parent,"path":path,"label":options.name,"focus":false}), Duration::from_secs(60))
+                })?;
+                let opened = herdr::opened(&reply)?;
+                ensure(
+                    opened.workspace.checkout_path.as_deref() == Some(path),
+                    "Herdr returned a different checkout; transferred files were kept without setup",
+                )?;
+                Some(opened.workspace)
+            }
+        } else {
+            None
+        };
+        let mut timing = timings("setup")?;
+        let waiting = Instant::now();
+        let queued = {
+            let _state = locks::state(self.paths)?;
+            add(&mut timing, "stateLockWait", waiting);
+            self.enroll(
+                path,
+                options,
+                timing,
+                socket.as_deref(),
+                workspace.as_ref(),
+                socket.is_none(),
+            )?
+        };
+        self.finish_request(queued, options)
+    }
     pub(crate) fn setup_workspace(
         &self,
         socket: &str,

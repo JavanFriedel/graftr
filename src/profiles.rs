@@ -282,13 +282,25 @@ pub fn parse(value: &Value) -> Result<Profile> {
         let hooks = object(value)?;
         ensure(
             hooks.keys().all(|key| {
-                ["afterEnvironment", "afterDependencies", "cleanup", "retire"]
-                    .contains(&key.as_str())
+                [
+                    "afterEnvironment",
+                    "afterDependencies",
+                    "afterTransfer",
+                    "cleanup",
+                    "retire",
+                ]
+                .contains(&key.as_str())
             }),
-            "hooks supports only afterEnvironment, afterDependencies, cleanup and retire",
+            "hooks supports only afterEnvironment, afterDependencies, afterTransfer, cleanup and retire",
         )?;
         let mut result = Object::new();
-        for phase in ["afterEnvironment", "afterDependencies", "cleanup", "retire"] {
+        for phase in [
+            "afterEnvironment",
+            "afterDependencies",
+            "afterTransfer",
+            "cleanup",
+            "retire",
+        ] {
             if let Some(value) = hooks.get(phase) {
                 result.insert(
                     phase.into(),
@@ -346,4 +358,33 @@ pub fn startup_thaw(paths: &Paths) -> Result<bool> {
             .as_bool()
             .ok_or_else(|| "startupThaw must be a boolean".into())
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn transfer_hooks_use_the_existing_strict_command_contract() {
+        let profile = |hooks: Value| json!({"repo":"/repo","worktreeRoot":"/trees","localPorts":[3200,3300],"hooks":hooks});
+        let hook = json!({"name":"board-handoff","command":["transfer-board", "$GRAFTR_TRANSFER_DESTINATION"]});
+        let parsed = parse(&profile(json!({"afterTransfer":[hook.clone()]}))).unwrap();
+        assert_eq!(
+            parsed.value()["hooks"]["afterTransfer"][0]["timeoutMs"],
+            60000
+        );
+        assert_eq!(
+            parsed.value()["hooks"]["afterTransfer"][0]["command"],
+            hook["command"]
+        );
+        for hooks in [
+            json!({"afterReceive":[hook.clone()]}),
+            json!({"afterTransfer":[hook.clone(),hook.clone()]}),
+            json!({"afterTransfer":[{"name":"bad","command":"transfer-board"}]}),
+            json!({"afterTransfer":[{"name":"bad","command":["transfer-board"],"timeoutMs":99}]}),
+            json!({"afterTransfer":[{"name":"bad","command":["transfer-board"],"background":true}]}),
+        ] {
+            assert!(parse(&profile(hooks)).is_err());
+        }
+    }
 }

@@ -1,6 +1,6 @@
 use crate::validation::{Error, Result};
 use std::{
-    io::{ErrorKind, Read},
+    io::{ErrorKind, Read, Seek, Write},
     os::{
         fd::{AsRawFd, FromRawFd, OwnedFd},
         unix::process::{CommandExt, ExitStatusExt},
@@ -14,6 +14,19 @@ use std::{
 pub struct CommandResult {
     pub exit_code: i32,
     pub stdout: String,
+}
+
+/// Small protocol requests stay anonymous and in memory, including during previews.
+pub fn memory_input(bytes: &[u8]) -> Result<std::fs::File> {
+    let fd = unsafe { libc::memfd_create(c"graftr-input".as_ptr(), libc::MFD_CLOEXEC) };
+    if fd < 0 {
+        return Err("Could not prepare anonymous command input".into());
+    }
+    let mut file = unsafe { std::fs::File::from_raw_fd(fd) };
+    file.write_all(bytes)
+        .and_then(|_| file.rewind())
+        .map_err(|_| Error::from("Could not prepare anonymous command input"))?;
+    Ok(file)
 }
 
 pub fn wait_fd(fd: i32, events: i16, deadline: Instant) -> std::io::Result<()> {
@@ -156,9 +169,13 @@ pub fn run_logged(
                 "GRAFTR_URL",
                 "GRAFTR_CLEANUP_RUN_ID",
                 "GRAFTR_RETIRE_RUN_ID",
+                "GRAFTR_SETUP_RUN_ID",
+                "GRAFTR_DEPENDENCIES",
+                "GRAFTR_TASK_SLUG",
             ]
             .contains(&name.as_ref())
                 || name.starts_with("GRAFTR_PORT_")
+                || name.starts_with("GRAFTR_TRANSFER_")
             {
                 command.env_remove(key);
             }
@@ -224,6 +241,58 @@ pub fn run_with_timeout(
 }
 pub fn run_inherited(args: &[&str]) -> Result<CommandResult> {
     run_scoped(args, None, true, Duration::from_secs(60), false)
+}
+/// File-backed input avoids holding a transfer (or a pipe writer) in memory.
+pub fn run_file_input(
+    args: &[&str],
+    cwd: Option<&Path>,
+    env: &[(String, String)],
+    input: Option<std::fs::File>,
+    timeout: Duration,
+) -> Result<CommandResult> {
+    let mut command = Command::new(args[0]);
+    command
+        .args(&args[1..])
+        .envs(env.iter().map(|(key, value)| (key, value)))
+        .process_group(0)
+        .stdin(input.map_or_else(Stdio::null, Stdio::from))
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    if let Some(cwd) = cwd {
+        command.current_dir(cwd);
+    }
+    let mut child = command.spawn().map_err(|_| {
+        Error::from(
+            "Transfer command could not start; check Git/SSH and the remote graftr installation",
+        )
+    })?;
+    let output = child.stdout.take().unwrap();
+    let reader = thread::spawn(move || {
+        let mut bytes = Vec::new();
+        output.take(4 * 1024 * 1024 + 1).read_to_end(&mut bytes)?;
+        Ok::<_, std::io::Error>(bytes)
+    });
+    let waited = wait_child_with_cleanup(&mut child, timeout, true, true);
+    let bytes = reader
+        .join()
+        .map_err(|_| Error::from("Could not collect transfer command output"))?
+        .map_err(|_| Error::from("Could not read transfer command output"))?;
+    let (status, timed_out) =
+        waited.map_err(|_| Error::from("Could not wait for transfer command"))?;
+    if timed_out {
+        return Err(
+            "Transfer command timed out; the source and private recovery files were kept".into(),
+        );
+    }
+    crate::validation::ensure(
+        bytes.len() <= 4 * 1024 * 1024,
+        "Transfer command output exceeded its limit",
+    )?;
+    Ok(CommandResult {
+        exit_code: status.code().unwrap_or(1),
+        stdout: String::from_utf8(bytes)
+            .map_err(|_| Error::from("Transfer requires UTF-8 Git paths and protocol output"))?,
+    })
 }
 fn run_scoped(
     args: &[&str],
@@ -425,6 +494,15 @@ pub fn uuid() -> Result<String> {
 mod tests {
     use super::*;
     #[test]
+    fn anonymous_input_preserves_bytes_and_starts_at_the_beginning() {
+        let original = b"private\0binary\xff\n";
+        let mut file = memory_input(original).unwrap();
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes).unwrap();
+        assert_eq!(bytes, original);
+        assert_eq!(file.metadata().unwrap().len(), original.len() as u64);
+    }
+    #[test]
     fn runs_literal_arguments_and_never_returns_private_errors() {
         assert_eq!(
             run(&["printf", "%s", "$(touch not-executed)"], None, true)
@@ -462,6 +540,45 @@ mod tests {
         assert!(error.message.contains("timed out"));
         assert!(started.elapsed() < Duration::from_secs(2));
         assert_eq!(run(&["true"], None, true).unwrap().exit_code, 0);
+    }
+    #[test]
+    fn file_input_commands_are_bounded_and_do_not_echo_private_stderr() {
+        let result = run_file_input(
+            &[
+                "sh",
+                "-c",
+                "printf public; printf private-value >&2; exit 7",
+            ],
+            None,
+            &[],
+            None,
+            Duration::from_secs(1),
+        )
+        .unwrap();
+        assert_eq!(result.stdout, "public");
+        assert_eq!(result.exit_code, 7);
+        let started = Instant::now();
+        let error = run_file_input(
+            &["sh", "-c", "sleep 60"],
+            None,
+            &[],
+            None,
+            Duration::from_millis(30),
+        )
+        .err()
+        .unwrap();
+        assert!(error.message.contains("timed out"));
+        assert!(started.elapsed() < Duration::from_secs(2));
+        let error = run_file_input(
+            &["head", "-c", "4194305", "/dev/zero"],
+            None,
+            &[],
+            None,
+            Duration::from_secs(2),
+        )
+        .err()
+        .unwrap();
+        assert!(error.message.contains("exceeded"));
     }
     #[test]
     fn identifiers_are_random_uuid4_values() {

@@ -22,9 +22,8 @@ pub fn run(
     dependencies: &str,
     run_id: &str,
     cwd: &Path,
-    mut log: RunLog,
+    log: RunLog,
 ) -> std::result::Result<Value, HookFailure> {
-    let started = Instant::now();
     let mut env = task["overrides"]
         .as_object()
         .expect("validated hook environment")
@@ -39,6 +38,7 @@ pub fn run(
         ]
         .contains(&key.as_str())
             && !key.starts_with("GRAFTR_PORT_")
+            && !key.starts_with("GRAFTR_TRANSFER_")
     });
     for (key, source) in [
         ("GRAFTR_PROJECT", "project"),
@@ -77,13 +77,23 @@ pub fn run(
     }
     for (key, value) in [
         ("GRAFTR_TASK_SLUG", environment::task_slug(task)),
-        ("GRAFTR_HOOK_PHASE", phase.into()),
-        ("GRAFTR_HOOK_NAME", string(hook, "name").into()),
         ("GRAFTR_DEPENDENCIES", dependencies.into()),
         ("GRAFTR_SETUP_RUN_ID", run_id.into()),
     ] {
         env.insert(key.into(), json!(value));
     }
+    run_with_env(hook, phase, cwd, env, log)
+}
+pub fn run_with_env(
+    hook: &Value,
+    phase: &str,
+    cwd: &Path,
+    mut env: Object,
+    mut log: RunLog,
+) -> std::result::Result<Value, HookFailure> {
+    let started = Instant::now();
+    env.insert("GRAFTR_HOOK_PHASE".into(), json!(phase));
+    env.insert("GRAFTR_HOOK_NAME".into(), hook["name"].clone());
     let args: Vec<_> = hook["command"]
         .as_array()
         .unwrap()
@@ -138,6 +148,7 @@ pub fn run(
         let label = match phase {
             "cleanup" => "Cleanup",
             "retire" => "Retire",
+            "afterTransfer" => "Transfer",
             _ => "Setup",
         };
         let exit = result["exitCode"]

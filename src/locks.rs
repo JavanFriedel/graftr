@@ -104,6 +104,25 @@ pub fn frozen(paths: &Paths, task_id: &str) -> Result<Lock> {
         "Another freeze/thaw operation owns this task; retry after it finishes",
     )
 }
+pub fn transfer(paths: &Paths, task_id: &str) -> Result<Lock> {
+    id(task_id)?;
+    acquire(
+        paths,
+        &format!("transfer-{task_id}.lock"),
+        Duration::ZERO,
+        "Another transfer owns this task; retry after it finishes",
+    )
+}
+
+pub fn project(paths: &Paths, project: &str) -> Result<Lock> {
+    crate::validation::name(project)?;
+    acquire(
+        paths,
+        &format!("project-{project}.lock"),
+        Duration::ZERO,
+        "Another project migration owns this project; retry after it finishes",
+    )
+}
 
 #[cfg(test)]
 mod tests {

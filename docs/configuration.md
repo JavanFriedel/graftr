@@ -36,7 +36,7 @@ startup thaws. Unscheduled/future frozen tasks never return automatically at sta
 | `installInputs` | Omitted | Extra literal relative file paths to fingerprint in addition to automatic dependency inputs. |
 | `installOutputs` | Automatic discovery | Literal relative files/directories required for installation reuse; an explicit array replaces discovery, and `[]` means fingerprint-only reuse. |
 | `healthChecks` | Omitted/disabled | Up to 16 named HTTP, TCP, or command checks, executed only by `graftr health`. |
-| `hooks` | Omitted/disabled | Ordered trusted commands in optional `afterEnvironment`, `afterDependencies`, `cleanup`, and `retire` phases, such as `graftr hook tailscale`. |
+| `hooks` | Omitted/disabled | Ordered trusted commands in optional `afterEnvironment`, `afterDependencies`, `afterTransfer`, `cleanup`, and `retire` phases. `afterTransfer` is a sender-only follow-up after confirmed destination readiness; see [hooks](hooks.md#transfer-follow-ups). |
 
 Port ranges start at unprivileged ports (1024 or higher) and exclude their upper bound.
 Allocation selects distinct available ports from each range independently; the secondary
@@ -47,6 +47,20 @@ Health checks share `name`, `type`, and optional `timeoutMs` (default `2000`, ra
 `100`–`30000`). HTTP checks require a local request `path` and optionally
 `expectedStatus` (default `200`); TCP checks have no additional fields; command checks
 require a `command` argv array. See [Optional application health](everyday-use.md#optional-application-health) for execution details.
+
+## Moving configuration to another machine
+
+`graftr transfer TARGET --to HOST --dry-run` proposes project migration when the
+destination has no project. Portable setup fields are separated from destination
+paths, port ranges, URL and environment baseline; existing destination profiles
+are never replaced. A private destination-local JSON profile fragment can override
+suggestions with `--destination-config PATH`. Review the printed proposal, then
+explicitly approve its current hash before creation. See [project migration](transferring.md#migrate-a-missing-project).
+
+This separation is a migration recipe, not a new persistent configuration schema:
+ordinary schema-2 profiles remain flat. No `.env` contents, Git credentials/remotes,
+task registry or global Herdr configuration is copied. Installer/hooks remain trusted
+code and must be reviewed for local assumptions and inline secrets before approval.
 
 ## Creation naming templates
 

@@ -24,3 +24,31 @@ Report suspected vulnerabilities privately through this repository's GitHub secu
 advisory reporting if enabled. Otherwise contact the maintainer through their GitHub
 profile to arrange private disclosure. Do not post credentials, private environments
 or raw sensitive logs in public issues.
+
+SSH handoffs use existing authentication and strict host-key checking; Graftr never
+enrolls a host or forwards an agent. Transfer bundles/receipts are private plaintext
+and may contain uncommitted code or explicitly included secrets. Ignored extras
+stay outside project Git objects/refs and are restored owner-private. Do not publish
+transfer storage. Returning work requires an unchanged recorded source snapshot;
+independent changes and uncertain restoration are not forcibly overwritten. Review
+the destination's trusted project configuration before running its installer/hooks.
+Optional `afterTransfer` commands run from the sender's approved local profile only
+after confirmed destination readiness. They own any further SSH/data handoff; Graftr
+does not sandbox them or extend its transfer guarantees to external artifacts.
+Failed/interrupted follow-ups retain the handoff and are never automatically replayed.
+Explicit `transfer --retry-hooks` uses the recorded destination/generation, skips
+recorded successes and preserves prior attempt results. Inspect external effects
+before choosing it; approved current commands can have arbitrary effects again.
+
+`transfer --dry-run` runs read-only Git/SSH inspections, not installers, hooks,
+health checks or persistent Graftr writes. It is a point-in-time preflight, not a
+snapshot lock or proof that executable setup will succeed. Missing-project migration
+requires the current proposal's explicit `--approve-project` hash; existing projects
+are not overwritten. Paths, port ranges, public URL and environment baseline are
+destination-owned. Private destination override files must be owned regular files,
+not symlinks. Environment contents, Git remotes/config, task registries and service
+identities are not imported. Portable installer/hooks are still trusted code: obvious
+embedded local paths are flagged, but arbitrary shell code, inline secrets and nested
+tools cannot be classified reliably. Review them before approval. Project creation
+is separately receipted and not atomic with worktree transfer; preserve private
+project-transfer bundles/receipts after failure rather than forcing rollback/replay.

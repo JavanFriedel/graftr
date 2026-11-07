@@ -4,6 +4,19 @@ Part of the [Graftr guide](../README.md).
 
 ## Machine-readable command results
 
+`transfer --dry-run` uses the same envelope with `data.dryRun: true`,
+`data.canTransfer`, `data.findings` and `data.status: "checked"` or `"attention"`.
+Read-only failure exits 1 with `outcome: "failed"`; success is preflight only, not
+destination setup readiness. Findings identify checks not performed.
+Missing projects additionally return `data.projectMigration` (portable field names,
+destination-local suggestions, blockers and approval hash) and `data.approvalCommand`.
+No raw source command argv or environment values are included in the proposal.
+`--approve-project SHA256` explicitly authorizes only that current missing-project
+proposal. `--destination-config PATH` refers to a private profile fragment on the
+destination, never an existing-project overwrite. These options cannot combine
+with `--retry-hooks`; approval cannot combine with `--dry-run`.
+See [transfer preflight and migration](transferring.md#dry-run-before-sending).
+
 Public commands are human-readable by default, including create/setup/open,
 cleanup/removal, health, labels, freeze/thaw/scheduling and plugin installation.
 Scripts and agents must explicitly request `--json`; output is never switched to
@@ -115,6 +128,26 @@ can be partial and does not prove that Herdr registration failed. Inspect
 `herdr plugin list` before retrying. Installation never runs startup hooks. The
 plugin's startup worker reconciles and checks scheduled returns by default;
 top-level `startupThaw: false` disables only that startup return check.
+
+`graftr transfer TARGET --to HOST --json` adds optional `data.timings` with
+`elapsedMs`, `stagesMs`, and receiver-reported `destination` timings. These are
+recorded operation durations, not readiness or permission to replay effects;
+cached acknowledgements retain their original timings. Timed transfer progress
+also has `elapsedMs` on completed and uncertain steps. See
+[transfer timing and recovery](transferring.md#retries-output-and-recovery).
+
+Configured sender-side `hooks.afterTransfer` adds optional `data.afterTransfer`
+with `status` (`complete`, `failed`, `incomplete`), safe hook observations and any
+failure message, plus `data.destinationStatus: "ready"`. Sender follow-up failure
+is partial with `TRANSFER_ATTENTION` even though the destination is ready. Warnings
+include `data.retryCommand`. Ordinary cached retries never rerun these commands;
+incomplete/running observations need explicit review. `transfer --retry-hooks`
+deliberately resumes only unfinished hooks with the original context, skips
+successes and reports `data.followUpOnly: true`; its timings cover only the retry.
+`data.afterTransfer.plannedHooks` holds the original names/order and `attempt`
+increments from 1. Prior results are preserved privately. Hook output stays in
+sender-private logs. See
+[transfer follow-ups](hooks.md#transfer-follow-ups).
 
 ### Partial failures and safe recovery
 

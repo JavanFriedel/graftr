@@ -4,7 +4,7 @@ Part of the [Graftr guide](../README.md).
 
 ## Unified lifecycle hooks
 
-An approved project profile can add four narrow extension points without replacing
+An approved project profile can add five narrow extension points without replacing
 Graftr's lifecycle or removal handoff:
 
 ```json
@@ -14,6 +14,16 @@ Graftr's lifecycle or removal handoff:
   ],
   "afterDependencies": [
     { "name": "generate", "command": ["pnpm", "run", "generate"], "timeoutMs": 120000 }
+  ],
+  "afterTransfer": [
+    {
+      "name": "planboard",
+      "command": [
+        "sh", "-c",
+        "exec plannr transfer --to \"$GRAFTR_TRANSFER_DESTINATION\" --worktree \"$GRAFTR_TRANSFER_DESTINATION_PATH\" --transfer-id \"$GRAFTR_TRANSFER_ID\" --lineage \"$GRAFTR_TRANSFER_LINEAGE\" --if-present --json"
+      ],
+      "timeoutMs": 600000
+    }
   ],
   "cleanup": [
     { "name": "report-closed", "command": ["sh", "-c", "echo \"$GRAFTR_TASK_ID closed\""] }
@@ -77,7 +87,7 @@ is never copied into CLI output, receipts, or Herdr notifications; hook results 
 log's path. Timeouts terminate only the
 newly owned subprocess group, and the runner cleans up same-group descendants when the
 command exits. Descendants that deliberately detach into another group are not contained.
-Commands must be finite and idempotent. They run again on a new setup/open/retry attempt;
+Commands must be finite and idempotent. Setup hooks run again on a new setup/open/retry attempt;
 resuming after worker interruption may rerun earlier commands. There is no exactly-once
 guarantee or hook-success cache. Duplicate live workers for the same request do not
 duplicate successful setup execution.
@@ -104,6 +114,108 @@ bypass. A failure while reopening may leave a previously published resource unch
 does not claim a fresh ready setup. Inspect status, fix the reported issue, then retry
 `graftr setup --wait` inside the owned Herdr worktree. Use `graftr help hooks` for a
 short command-line reference. No hook is enabled in your profiles automatically.
+
+## Transfer follow-ups
+
+`hooks.afterTransfer` runs on the **sender**, in its canonical source checkout,
+only after a matching destination acknowledgement reports `ready`. It does not
+run as part of setup/open, on the receiver, or after failed/uncertain transfers or
+destination setup needing attention. On a return, the machine sending the return
+uses its own local project configuration. Managed, adopted and unmanaged linked
+sources all support this phase; it never enrolls an external source or runs its
+installers/setup hooks.
+
+The example calls Plannr directly; no helper executable is needed. It requires a
+Plannr build supporting `transfer` on both machines, with `plannr` on the sender's
+and remote noninteractive SSH `PATH`. Confirm `plannr transfer --help` before
+enabling it. `--if-present` skips successfully when the source branch has no board;
+it does not create one or move durable project boards. The maximum ten-minute hook
+deadline bounds a noninteractive board copy; Plannr's own receipts handle an
+interrupted segment. Plannr owns checksums, publication/attachment, unchanged-source
+archival, return-lineage checks and same-ID resume. Graftr does not discover boards,
+copy Plannr storage, attach boards, or add files to the Git transfer payload. Never
+copy/edit managed `board.json`, bindings or repository records as a substitute.
+Other tools can use the same generic hook with their own argv/scripts.
+
+Transfer hooks inherit the caller environment with authoritative overrides:
+
+| Context variable | Value |
+| --- | --- |
+| `GRAFTR_PROJECT`, `GRAFTR_TASK_ID` | Source profile name and `PROJECT--TASK` identity. |
+| `GRAFTR_WORKTREE_PATH`, `GRAFTR_BRANCH` | Source absolute checkout and attached branch. |
+| `GRAFTR_HOOK_PHASE`, `GRAFTR_HOOK_NAME` | `afterTransfer` and this command's configured name. |
+| `GRAFTR_TRANSFER_DESTINATION` | Exact SSH host/alias supplied to `--to`, including any user prefix. |
+| `GRAFTR_TRANSFER_DESTINATION_PATH` | Absolute destination checkout path from the confirmed receipt. |
+| `GRAFTR_TRANSFER_ID` | Immutable transfer-generation UUID; unchanged on an acknowledgement retry. |
+| `GRAFTR_TRANSFER_LINEAGE` | UUID shared across this handoff's successive send/return generations. |
+
+There is no implicit shell/interpolation: `"$GRAFTR_TRANSFER_DESTINATION"` in a
+literal argv array stays literal. Read environment variables in your script, or
+explicitly use `sh -c` with properly quoted expansions. The follow-up owns its own
+SSH trust checks, timeouts, collision handling and external resource verification.
+Use the transfer ID for idempotence; it is context, not an authentication credential.
+An acknowledgement confirms the captured work, not an atomic snapshot of external
+boards or their state when the follow-up runs. Stop external writers as appropriate.
+
+The phase does **not** compose/source `.env` or apply the profile's setup
+`envOverrides`. Setup/dependency/resource-run IDs, task slug and addresses are
+omitted, clearing stale inherited values. Reserved `GRAFTR_TRANSFER_*` values are
+cleared from inherited context in all hook phases; only this phase sets them.
+
+The existing argv/count/deadline limits and private log/process-group behavior
+apply. Commands run sequentially under the source checkout-operation lock and
+transfer lock, outside the shared registry lock. Do not recursively invoke a
+Graftr operation needing either held lock. Source branch/registration and project
+configuration are rechecked around commands; changes stop later commands for review.
+
+Before invoking any command, Graftr durably saves the confirmed handoff with an
+incomplete follow-up, then records each hook as `running` before execution and its
+safe result afterward. The first failure stops later commands. `--json` reports
+optional `data.destinationStatus: "ready"` and `data.afterTransfer`, with batch
+`status` of `complete`, `failed` or `incomplete`, hook observations, and any safe
+failure message. `plannedHooks` records the original names/order; `attempt` starts
+at 1. Hook observations contain phase/name/status, available duration,
+exit code/reason and private log path, never argv/output. Progress uses timed
+`run-after-transfer-hook` steps. A `running` observation is historical evidence,
+not proof the process is alive.
+
+A failed/interrupted follow-up warns with `data.status: "attention"`, partial outcome
+and exit 1, **without undoing the already-ready destination**. `data.retryCommand`
+and human output give the follow-up-only recovery command. Ordinary transfer
+retries return the saved result and never rerun successful, failed, unstarted or
+interrupted commands; adding a hook later does not change a completed handoff.
+A lost acknowledgement may be confirmed by retry, then run follow-ups for the
+first time. There is no exactly-once external transaction or automatic repair.
+Inspect sender logs/receipts and external state, fix the integration, then run:
+
+```sh
+graftr transfer my-project--fix-login --retry-hooks
+```
+
+This deliberately resumes only unfinished sender hooks from the latest confirmed
+outgoing handoff, skipping recorded successes. It does not contact the destination
+through Graftr's transfer protocol, resend Git/files, recapture the checkout or
+rerun destination setup; the integration command can still use SSH itself. Original
+generation, lineage, SSH destination and destination path are reused. Plannr therefore
+receives the same transfer ID and can resume just its board segment. JSON adds
+`data.followUpOnly: true` and timings for this attempt only. A completed follow-up
+retry returns its saved result without rerunning anything.
+
+Keep the original hook names/order; commands/deadlines may be fixed in the current
+approved profile before this deliberate retry. Earlier successful commands still
+are not rerun. A changed/missing hook-name plan is refused rather than inventing new
+work. Prior attempt results remain in private
+`state/transfers/PROJECT--TASK/follow-up-GENERATION-ATTEMPT.json` files; each retry
+records a new attempt before commands. Old receipts without the plan/attempt fields
+need explicit recovery through the integration's own CLI. Never combine
+`--retry-hooks` with `--to`, `--include` or `--no-herdr`; the recorded handoff is
+authoritative. Superseded/incoming or unconfirmed handoffs cannot use this mode.
+
+Setup/open does not repair this phase. If destination
+setup originally needed attention, a later setup repair also does not trigger the
+skipped follow-up: complete it explicitly. A new send/return generation runs the
+configured commands again. No live profile is edited automatically; upgrade Graftr
+on machines using this new phase before adding it to their profiles.
 
 ## Durable cleanup and native deletion
 

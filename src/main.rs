@@ -41,6 +41,7 @@ mod system;
 mod tailscale;
 mod targets;
 mod terminal;
+mod transfer;
 mod validation;
 
 use help::Catalog;
@@ -234,8 +235,15 @@ fn validate_flags(command: &str, flags: &BTreeMap<String, String>) -> Result<(),
     for (key, commands, message) in [
         (
             "no-herdr",
-            &["create", "setup", "open", "thaw"][..],
-            "--no-herdr is only valid for create/setup/open/thaw",
+            &[
+                "create",
+                "setup",
+                "open",
+                "thaw",
+                "transfer",
+                "_transfer-receive",
+            ][..],
+            "--no-herdr is only valid for create/setup/open/thaw/transfer",
         ),
         (
             "until",
@@ -272,6 +280,45 @@ fn validate_flags(command: &str, flags: &BTreeMap<String, String>) -> Result<(),
     if (has("environment") || has("hook")) && command != "adopt" {
         return Err("--environment and --hook are only valid for adopt".into());
     }
+    if (has("to") || has("include")) && command != "transfer" {
+        return Err("--to and --include are only valid for transfer".into());
+    }
+    if has("retry-hooks") && command != "transfer" {
+        return Err("--retry-hooks is only valid for transfer".into());
+    }
+    for key in ["dry-run", "approve-project", "destination-config"] {
+        if has(key) && command != "transfer" {
+            return Err(format!("--{key} is only valid for transfer"));
+        }
+    }
+    if has("dry-run") && has("approve-project") {
+        return Err("--dry-run never applies a project proposal; omit --approve-project".into());
+    }
+    if let Some(approval) = flags.get("approve-project")
+        && (approval.len() != 64
+            || !approval
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)))
+    {
+        return Err(
+            "--approve-project requires the SHA-256 approval from the current migration proposal"
+                .into(),
+        );
+    }
+    if has("retry-hooks")
+        && [
+            "to",
+            "include",
+            "no-herdr",
+            "dry-run",
+            "approve-project",
+            "destination-config",
+        ]
+        .iter()
+        .any(|key| has(key))
+    {
+        return Err("--retry-hooks uses the recorded handoff; do not combine it with transfer, dry-run or project migration options".into());
+    }
     if has("json")
         && ![
             "create",
@@ -298,6 +345,12 @@ fn validate_flags(command: &str, flags: &BTreeMap<String, String>) -> Result<(),
             "thaw",
             "schedule",
             "plugin",
+            "transfer",
+            "_transfer-check",
+            "_transfer-receive",
+            "_transfer-preview",
+            "_transfer-project-plan",
+            "_transfer-project-receive",
         ]
         .contains(&command)
     {
@@ -329,7 +382,7 @@ fn validate_flags(command: &str, flags: &BTreeMap<String, String>) -> Result<(),
     if has("project")
         && ![
             "open", "close", "cleanup", "remove", "nuke", "health", "doctor", "env", "label",
-            "logs", "freeze", "thaw", "schedule", "adopt",
+            "logs", "freeze", "thaw", "schedule", "adopt", "transfer",
         ]
         .contains(&command)
     {
@@ -597,6 +650,12 @@ fn execute(
         "reconcile",
         "_startup",
         "_event",
+        "transfer",
+        "_transfer-check",
+        "_transfer-receive",
+        "_transfer-preview",
+        "_transfer-project-plan",
+        "_transfer-project-receive",
     ]
     .contains(&command);
     if command == "completion" {
@@ -686,6 +745,82 @@ fn execute(
     let state = &paths.state;
     if !known_command {
         return Err(format!("Unknown command: {command}").into());
+    }
+    if [
+        "transfer",
+        "_transfer-check",
+        "_transfer-receive",
+        "_transfer-preview",
+        "_transfer-project-plan",
+        "_transfer-project-receive",
+    ]
+    .contains(&command)
+    {
+        let result = match command {
+            "transfer" => {
+                if positionals.len() > 2 {
+                    return Err("transfer accepts one optional worktree target"
+                        .to_owned()
+                        .into());
+                }
+                if flags.contains_key("retry-hooks") {
+                    transfer::retry_hooks(
+                        &paths,
+                        positionals.get(1).map(String::as_str),
+                        flags.get("project").map(String::as_str),
+                        progress,
+                    )?
+                } else {
+                    let destination = flags
+                        .get("to")
+                        .ok_or_else(|| "transfer requires --to SSH_HOST".to_owned())?;
+                    transfer::send(
+                        &paths,
+                        positionals.get(1).map(String::as_str),
+                        flags.get("project").map(String::as_str),
+                        &transfer::Options {
+                            destination,
+                            extras: &repeated_values(args, "include", catalog),
+                            no_herdr: flags.contains_key("no-herdr"),
+                            dry_run: flags.contains_key("dry-run"),
+                            approve_project: flags.get("approve-project").map(String::as_str),
+                            destination_config: flags.get("destination-config").map(String::as_str),
+                        },
+                        progress,
+                    )?
+                }
+            }
+            "_transfer-check" => transfer::check(&paths, &positionals[1..])?,
+            _ => {
+                if positionals.len() != 1 {
+                    return Err("Unexpected transfer receiver arguments".to_owned().into());
+                }
+                match command {
+                    "_transfer-preview" => transfer::preview_receive(&paths)?,
+                    "_transfer-project-plan" => transfer::project_plan(&paths)?,
+                    "_transfer-project-receive" => transfer::project_receive(&paths, progress)?,
+                    _ => transfer::receive(&paths, flags.contains_key("no-herdr"), progress)?,
+                }
+            }
+        };
+        let attention = result["status"] == "attention";
+        // The private SSH protocol acknowledges durable receipt separately from setup.
+        let failed = attention && command == "transfer";
+        let preflight = result["dryRun"] == true || result.get("projectMigration").is_some();
+        let output = if json {
+            serde_json::to_string_pretty(&envelope(Some(command), if failed {if preflight {"failed"} else {"partial"}} else {"completed"}, result.clone(),
+                if failed && preflight {json!({"code":"TRANSFER_PREFLIGHT_FAILED","message":result["message"],"phase":"preflight","details":null,
+                    "recovery":["Review findings and any project migration proposal. Dry runs never capture work, create projects or run installers/hooks.","Prepare destination-local requirements, rerun --dry-run, and explicitly approve the current proposal only after reviewing its trusted commands."]})}
+                else if failed {json!({"code":"TRANSFER_ATTENTION", "message":result["message"], "phase":"operation", "details":null,
+                    "recovery":["The source was kept. Inspect destination status and both machines' private transfer receipts; afterTransfer results/logs are on the sender.", "Review external effects. Retry setup/open only for destination setup failures. For sender follow-ups use the reported retryCommand (--retry-hooks), or the integration CLI for older receipts; ordinary transfer retries do not replay hooks."]})} else {Value::Null},progress)).unwrap()
+        } else {
+            transfer::format(&result, terminal::columns())
+        };
+        return Ok(if failed {
+            Reply::Unsuccessful(output)
+        } else {
+            Reply::Line(output)
+        });
     }
     if ["reconcile", "_startup", "_event"].contains(&command) {
         prune::automatic(&paths);
@@ -1503,6 +1638,8 @@ fn main() -> ExitCode {
                 }
                 return ExitCode::FAILURE;
             }
+            let dry_run = command.as_deref() == Some("transfer")
+                && before_separator.iter().any(|s| s == "--dry-run");
             let recovery = if error.phase == "arguments" {
                 vec![
                     if command.as_deref().is_some_and(|c| catalog.is_command(c)) {
@@ -1514,6 +1651,8 @@ fn main() -> ExitCode {
                         "Read graftr --help and choose a command.".into()
                     },
                 ]
+            } else if dry_run {
+                vec!["This dry run changed no project, checkout or Graftr state. Review the preflight/SSH/configuration error, correct it and rerun --dry-run; no installers or hooks were executed.".into()]
             } else if error.phase == "state" {
                 vec!["Review the registry/configuration error before retrying. Keep ownership records and port leases together; do not delete them to bypass a conflict.".into()]
             } else if error.phase == "target" {
@@ -1525,6 +1664,18 @@ fn main() -> ExitCode {
             } else if command.as_deref() == Some("doctor") {
                 vec!["Review data.findings and their conditional next steps. Unknown or unchecked evidence is not proof that resources are absent.".into(),
                     "Diagnosis changes nothing. Preserve records/leases and review pending command effects before any deliberate recovery action.".into()]
+            } else if [
+                Some("transfer"),
+                Some("_transfer-receive"),
+                Some("_transfer-check"),
+                Some("_transfer-preview"),
+                Some("_transfer-project-plan"),
+                Some("_transfer-project-receive"),
+            ]
+            .contains(&command.as_deref())
+            {
+                vec!["Keep both checkouts and private state/transfers receipts/bundles. A failed connection may have delivered the captured snapshot; retry the same destination to confirm receipt.".into(),
+                    "Review interrupted restoration and setup effects on the destination. Do not force-reset branches, remove receipts, or blindly replay hooks; see docs/transferring.md.".into()]
             } else if [Some("freeze"), Some("thaw"), Some("schedule")].contains(&command.as_deref())
             {
                 vec!["Inspect graftr frozen and graftr status; preserve the recovery record, branch and any active checkout/leases.".into(), "Review cleanup/setup effects and systemd timer state before explicitly retrying. Do not reset branches, force deletion or automatically replay hooks.".into()]
@@ -1561,7 +1712,7 @@ fn main() -> ExitCode {
             };
             let output = envelope(
                 command.as_deref(),
-                if progress.steps().as_array().unwrap().is_empty() {
+                if dry_run || progress.steps().as_array().unwrap().is_empty() {
                     "failed"
                 } else {
                     "partial"

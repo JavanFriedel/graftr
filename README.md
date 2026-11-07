@@ -65,6 +65,8 @@ graftr close my-project--fix-login
 graftr open my-project--fix-login
 graftr freeze my-project--fix-login --note "Return after review"
 graftr thaw my-project--fix-login
+graftr transfer my-project--fix-login --to laptop --dry-run
+graftr transfer my-project--fix-login --to laptop
 ```
 
 `close` keeps the checkout and branch. `remove` deletes a clean checkout and its
@@ -73,9 +75,15 @@ local branch, with typed terminal confirmation. `freeze` reclaims the checkout's
 disk space and retains recovery metadata; `thaw` regenerates setup, not ignored files.
 Dirty work is not silently stashed, discarded or committed.
 
+Transfer dry runs inspect readiness without changing either machine. A missing
+destination project produces a migration proposal with destination-local settings;
+creating it requires explicit approval. Project migration does not copy environment
+values or Git credentials. See [transfer and project migration](docs/transferring.md).
+
 ## Dependencies and integrations
 
 - **Git** for worktree and branch operations.
+- **SSH**, only for cross-machine handoffs over existing trusted connections (including Tailscale).
 - **Herdr 0.9.3+**, optional, for workspaces, shell tabs and independent plugin workers.
   Set `herdr` to `auto` or `required`, then run `graftr plugin install` explicitly.
 - **systemd user timers**, optional, for persistent per-task one-off scheduled returns.
@@ -98,8 +106,9 @@ not a sandbox; review them before enabling them. See [security boundaries](SECUR
 | [Diagnosis](docs/diagnosis.md) | Status, doctor, logs, health and environment refresh |
 | [Removal](docs/removal.md) | Safe removal and merged-branch deletion |
 | [Freeze/return](docs/freezing.md) | Storage, persistent timers and retry policy |
+| [Transfer](docs/transferring.md) | SSH/Tailscale handoffs, unfinished work and return safeguards |
 | [Networking](docs/networking.md) | Ports, public origins and optional publishing |
-| [Hooks](docs/hooks.md) | Setup, cleanup, retirement and optional databases |
+| [Hooks](docs/hooks.md) | Setup, transfer follow-ups, cleanup, retirement and optional databases |
 | [Scripting](docs/scripting.md) | JSON envelopes, partial failures and recovery |
 | [Upgrading](docs/upgrading.md) | Legacy record/config compatibility |
 | [Benchmarks](docs/benchmarks.md) | Repeatable timing, RSS and lifecycle contracts |
@@ -127,7 +136,7 @@ python3 tests/check-native-build.py
 Python 3.10+, Git and GNU `time` are test/benchmark tools, not build/runtime dependencies.
 Tests use private disposable repositories/HOME/XDG state and fake external integration
 boundaries, never your current Herdr server, systemd manager, database or private profiles.
-238 checked-in help snapshots cover every command/topic at seven widths. Review changes
+245 checked-in help snapshots cover every command/topic at seven widths. Review changes
 before regenerating snapshots with `python3 scripts/update-help-snapshots.py`.
 
 The CLI regression suite retains the port's behavior assertions. By default, its
