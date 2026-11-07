@@ -1,6 +1,6 @@
 [package]
 name = "graftr"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 publish = false
 description = "Prepare, freeze and retire Git worktrees and development environments"
