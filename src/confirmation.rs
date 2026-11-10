@@ -78,6 +78,34 @@ fn ask(prompt: &str) -> Result<Option<String>> {
         bytes.push(byte);
     }
 }
+pub fn confirm_workspace_close(target: &Value, removing: bool) -> Result<bool> {
+    ensure(
+        std::io::stdin().is_terminal() && std::io::stderr().is_terminal(),
+        Error {
+            code: "CONFIRMATION_REQUIRED",
+            message: "This workspace is not Graftr-managed. Run graftr close in an interactive terminal to confirm closing only its Herdr workspace; --yes and plugin actions cannot bypass this prompt".into(),
+        },
+    )?;
+    let _interrupt = Interrupt::install()?;
+    let prompt = format!(
+        "This is not a Graftr-managed workspace.{}\n  Herdr workspace: {} ({})\n  Checkout: {}\nCloses this workspace and its panes only; files and Git branches are kept.\nNo Graftr cleanup hooks run; external services are not stopped.\nProcesses in its panes will be terminated; save your work first.\nClose in Herdr instead? [y/N] ",
+        if removing {
+            " Removal is not available."
+        } else {
+            ""
+        },
+        target["label"],
+        target["workspaceId"],
+        if target["path"].is_null() {
+            "not associated".into()
+        } else {
+            target["path"].to_string()
+        },
+    );
+    Ok(ask(&prompt)?
+        .is_some_and(|s| ["y", "yes"].contains(&s.trim_matches(js_space).to_lowercase().as_str())))
+}
+
 pub fn confirm(target: &Value, kind: &str) -> Result<bool> {
     let nuke = kind == "nuke";
     let freeze = kind == "freeze";

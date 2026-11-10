@@ -790,7 +790,7 @@
           "Show help for this command."
         ]
       ],
-      "targetNote": "TARGET accepts a checkout name, branch, path, or full ID. See 'graftr help targeting'."
+      "targetNote": "TARGET accepts a checkout name, branch, path, or full ID. See 'graftr help targeting'.\n\nWith no target (or @) and no --project, an unmanaged Herdr workspace offers a\nterminal-only close confirmation. This keeps all files and branches, runs no Graftr\ncleanup hooks, and terminates processes in its panes. External services are not stopped.\nIt uses the caller's workspace, never another client's focus, and requires the Graftr\nHerdr plugin for the independent close worker. Cancellation changes nothing.\nNoninteractive/plugin invocations cannot bypass this confirmation. A queued result\nmeans accepted, not completed; inspect Herdr and its plugin logs, not Graftr task status."
     },
     "cleanup": {
       "summary": "Run recorded cleanup; keep the workspace and files",
@@ -865,7 +865,7 @@
       "options": [
         [
           "--yes",
-          "Skip confirmation only; all ownership and clean-Git checks remain."
+          "Skip managed removal confirmation only; never skips an unmanaged close-only prompt."
         ],
         [
           "--project PROJECT",
@@ -885,7 +885,7 @@
         "graftr remove"
       ],
       "notes": "Asks for confirmation, runs recorded cleanup, closes the workspace, deletes the\ncheckout, and releases its ports. The Git branch is retained.\nUses the current verified attached branch, even after switching away from the\noriginal recorded branch. Confirmation shows both names and the current commit;\nswitching branches or changing that commit after confirmation requires reconfirmation.\nAll existing branches are retained. Detached checkouts still require manual review.\nResults name the observed branch and include recordedBranch when different. When\nboth checkout and registration are already absent, branch is null: the last branch\ncannot be inferred. Historical ownership records are not rewritten to adopt a branch.\nNuke remains strict about the recorded branch and merge checks.\n\nResume observed commits with create PROJECT TASK --branch BRANCH. This creates a new\nenvironment and lease; it cannot recover deleted ignored files.\n\nWARNING: Ignored files, including .env, node_modules, and caches, are deleted.\nSave anything you need first. Tracked changes and untracked files block removal;\n--yes never bypasses those checks, and there is no --force option.\nNoninteractive removal requires --yes unless invoked by an explicit Herdr action.\n\nRemoval from inside an attached task hands off to Herdr's independent worker; a\nremoving receipt means accepted, not completed. Unattached tasks remove directly,\neven from inside; your shell may remain in the deleted directory, so cd elsewhere.\nA known attachment still requires server/ownership checks; --no-herdr is not a\ndeletion bypass. Detached/external servers remain your responsibility.\n\nHerdr's native force removal remains Herdr's decision, not this command's policy.\nIts post-event cleanup fences setup and waits for the setup lock before releasing\nleases, then rechecks checkout/Git disappearance. It does not kill installers or\nreplay deletion. Failed cleanup or late writes retain ownership for review.",
-      "targetNote": "TARGET accepts a checkout name, branch, path, or full ID. See 'graftr help targeting'."
+      "targetNote": "TARGET accepts a checkout name, branch, path, or full ID. See 'graftr help targeting'.\n\nWith no target (or @) and no --project, an unmanaged Herdr workspace offers\n\"Close in Herdr instead?\" with terminal confirmation, even with --yes. This is\nclose-only, NOT removal: all files and branches are kept, no Graftr cleanup hooks\nrun, and processes in its panes terminate. External services are not stopped.\nExplicit unmatched targets never fall back. Requires the Graftr Herdr plugin;\nnoninteractive/plugin invocations cannot approve this alternative."
     },
     "nuke": {
       "summary": "Delete a clean worktree and its fully merged local branch",

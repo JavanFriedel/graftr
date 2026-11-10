@@ -4,6 +4,36 @@ Part of the [Graftr guide](../README.md).
 
 ## Remove a finished task
 
+### Unmanaged Herdr workspaces
+
+With no target (or `@`) and no `--project`, `graftr remove` or `graftr close`
+can recognize the caller's unmanaged Herdr workspace, including a main checkout.
+It asks **"Close in Herdr instead? [y/N]"** in an interactive terminal. This is a
+separate close-only alternative, not permission to remove a repository. Even
+`remove --yes` must show this prompt. Enter, no, EOF and Ctrl+C cancel without
+dispatching a close.
+
+Accepting closes only that workspace and its panes. All files (including dirty,
+untracked and ignored files) and Git branches are kept; processes in the panes
+terminate, so save work first. Graftr does not enroll a task, run cleanup hooks,
+release leases, or stop external services. Adopted worktrees retain their existing
+external-lifecycle restriction; this does not convert them into managed tasks.
+
+The Graftr Herdr plugin must be installed and use the same updated Graftr executable
+and XDG state. An independent close worker rechecks the confirmed workspace identity
+and refuses if a managed task now claims it. It never uses another client's focus.
+Failed handoff never falls back to closing the caller directly. A queued receipt
+means accepted, not completed; inspect Herdr and its plugin logs. No task is created
+for `graftr status` to track. JSON reports `data.action: "close-workspace"` and
+`data.managed: false`, even when the original command was `remove`.
+
+Explicit unmatched targets and `--project` never fall back to another workspace.
+Noninteractive calls and unconfirmed plugin actions refuse with
+`CONFIRMATION_REQUIRED`; there is no bypass. `nuke`, `freeze`, and task cleanup
+retain their managed-task requirements.
+
+### Managed task removal
+
 `close` is reversible; `remove` is full retirement. Run **`graftr remove` inside the
 managed worktree**, including a nested directory or plain terminal, or specify
 `graftr remove PROJECT--TASK` from elsewhere. Bare removal first matches the canonical

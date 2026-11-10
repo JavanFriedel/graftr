@@ -23,6 +23,14 @@ Scripts and agents must explicitly request `--json`; output is never switched to
 JSON automatically when redirected. Envelope versions and safety/confirmation
 checks are unchanged; incomplete status/list reports follow the contract below.
 
+Bare `close`/`remove` (or target `@`, without `--project`) in an unmanaged Herdr
+workspace require interactive confirmation for a close-only alternative, even
+with `remove --yes` or `--json`. Noninteractive calls return
+`CONFIRMATION_REQUIRED`. Confirmed JSON results use `data.action: "close-workspace"`,
+`data.managed: false`, and the workspace identity rather than a task ID. `remove`
+does not mean files were deleted in this case. `queued` means the independent
+worker was accepted; inspect Herdr/plugin logs, not task status. No task is enrolled.
+
 Human tables use the terminal width: status first wraps long project/task names and
 addresses inside their columns, keeping Address in the table when readable columns fit.
 On narrower screens, long trailing columns move beneath each row,

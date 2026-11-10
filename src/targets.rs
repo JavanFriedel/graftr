@@ -378,6 +378,13 @@ fn current_id(paths: &Paths, project: Option<&str>) -> TargetResult<String> {
                 && t.value()["workspaceId"].as_str() == workspace.as_deref()
         })
         .collect();
+    if matches.is_empty() && workspace.is_some() {
+        return Err(TargetError {
+            code: "WORKSPACE_UNMANAGED",
+            message: "This workspace does not own a Graftr task; use graftr close in an interactive terminal to close only its Herdr workspace".into(),
+            details: json!({"socket": socket, "workspaceId": workspace}),
+        });
+    }
     if matches.len() != 1 {
         return Err("This workspace does not own a task; provide PROJECT--TASK".into());
     }

@@ -71,6 +71,9 @@ standalone remove needs no plugin and can run from inside the checkout. Your ter
 is not closed and may remain in the deleted directory afterward; `cd` elsewhere.
 
 Herdr retains its native close/remove ordering, confirmation and force decisions.
+For an unmanaged caller workspace, bare `graftr close` or `graftr remove` offers
+an interactive **close-only** alternative that keeps the repository. See
+[unmanaged workspace confirmation](removal.md#unmanaged-herdr-workspaces).
 Graftr's post-event cleanup now records closure and fences setup before auxiliary
 cleanup; native removal waits for the setup lock before retiring leases. See
 [Native close/remove cleanup](#native-closeremove-cleanup) below for failure/retry and active-installer limits.

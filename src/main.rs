@@ -43,6 +43,7 @@ mod targets;
 mod terminal;
 mod transfer;
 mod validation;
+mod workspace_close;
 
 use help::Catalog;
 use serde_json::{Value, json};
@@ -484,6 +485,42 @@ fn output_setup(
         Reply::Unsuccessful(output)
     } else {
         Reply::Line(output)
+    })
+}
+
+fn workspace_close_reply(
+    command: &str,
+    outcome: &str,
+    result: Value,
+    json: bool,
+    progress: &progress::Progress,
+) -> Reply {
+    Reply::Line(if json {
+        serde_json::to_string_pretty(&envelope(
+            Some(command),
+            outcome,
+            result,
+            Value::Null,
+            progress,
+        ))
+        .unwrap()
+    } else {
+        let message = match outcome {
+            "cancelled" => "Workspace close cancelled; no workspace or files changed.",
+            "queued" => {
+                "Herdr accepted the close-only request; completion is not yet confirmed. Inspect Herdr and its plugin logs. No files or Git branches will be deleted."
+            }
+            _ => {
+                "Herdr workspace closed. Files and Git branches were kept; no Graftr cleanup hooks ran."
+            }
+        };
+        human::fields(
+            &format!("Herdr workspace {}: {outcome}", result["workspaceId"]),
+            &[("Action", Some("Close workspace only (not removal)".into()))],
+            Some(message),
+            result["status"].as_str().unwrap_or("cancelled"),
+            terminal::columns(),
+        )
     })
 }
 
@@ -1047,7 +1084,6 @@ fn execute(
         return thaw_reply(command, result, false, json, progress);
     }
     if ["cleanup", "close", "remove", "nuke"].contains(&command) {
-        prune::automatic(&paths);
         if command == "nuke" && (positionals.len() != 2 || positionals[1] == "@") {
             return Err("nuke requires an explicit worktree target (not @)"
                 .to_owned()
@@ -1056,12 +1092,53 @@ fn execute(
         if positionals.len() > 2 {
             return Err("Unexpected command arguments".to_owned().into());
         }
-        let id = targets::resolve_id(
+        if command == "close"
+            && positionals.len() == 1
+            && !flags.contains_key("project")
+            && let Some(target) = workspace_close::worker_target()?
+        {
+            let result = workspace_close::complete(&paths, progress, &target)?;
+            return Ok(workspace_close_reply(
+                command,
+                "completed",
+                result,
+                json,
+                progress,
+            ));
+        }
+        let resolved = targets::resolve_id(
             &paths,
             positionals.get(1).map(String::as_str),
             flags.get("project").map(String::as_str),
-        )
-        .map_err(|e| Failure::target_at(e, "target"))?;
+        );
+        let id = match resolved {
+            Err(error)
+                if error.code == "WORKSPACE_UNMANAGED"
+                    && ["close", "remove"].contains(&command)
+                    && (positionals.len() == 1 || positionals[1] == "@")
+                    && !flags.contains_key("project") =>
+            {
+                let target = workspace_close::preview(&paths, &error.details)
+                    .map_err(|e| Failure::at(e, "preflight"))?;
+                if !confirmation::confirm_workspace_close(&target, command == "remove")
+                    .map_err(|e| Failure::at(e, "confirmation"))?
+                {
+                    return Ok(workspace_close_reply(
+                        command,
+                        "cancelled",
+                        target,
+                        json,
+                        progress,
+                    ));
+                }
+                let result = workspace_close::dispatch(&paths, progress, &target)?;
+                return Ok(workspace_close_reply(
+                    command, "queued", result, json, progress,
+                ));
+            }
+            result => result.map_err(|e| Failure::target_at(e, "target"))?,
+        };
+        prune::automatic(&paths);
         let engine = setup::Engine {
             paths: &paths,
             progress,
