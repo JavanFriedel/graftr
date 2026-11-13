@@ -114,7 +114,7 @@ fn dependency_timing(receipt: &mut Value, status: &str) {
 fn new_receipt(path: &str) -> Value {
     json!({"schemaVersion": 1, "socket": null, "workspaceId": null, "path": path, "project": null, "taskId": null, "status": "pending", "step": "profile", "message": "Setup pending", "installKey": null, "dependencies": "not-configured", "skipInstall": false, "runId": null})
 }
-fn configuration(profile: &Value, task: &Value) -> Result<(Value, Value)> {
+pub(crate) fn configuration(profile: &Value, task: &Value) -> Result<(Value, Value)> {
     let templates = profile
         .get("envOverrides")
         .cloned()
@@ -865,7 +865,7 @@ impl Engine<'_> {
             || stateio::write_setup(self.paths, receipt),
         )
     }
-    fn profile(&self, project: &str) -> Result<Value> {
+    pub(crate) fn profile(&self, project: &str) -> Result<Value> {
         let profile = profiles::configured(self.paths, project)?.value().clone();
         for key in ["repo", "worktreeRoot", "envSource"] {
             if let Some(path) = profile[key].as_str() {

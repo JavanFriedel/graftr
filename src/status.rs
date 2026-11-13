@@ -1,6 +1,6 @@
 use crate::{
     records::{Adoption, Frozen, Setup, Task},
-    terminal::{Row, format_table, heading, wrap},
+    terminal::{Row, display, format_table, heading, wrap},
     validation::date_millis,
 };
 use icu_collator::{Collator, CollatorBorrowed, options::CollatorOptions};
@@ -10,6 +10,40 @@ use std::{
     sync::LazyLock,
     time::{SystemTime, UNIX_EPOCH},
 };
+
+pub fn target(
+    tasks: &[Task],
+    adopted: &[Adoption],
+    frozen: &[Frozen],
+    selector: Option<&str>,
+    project: Option<&str>,
+) -> Result<Option<Value>, crate::targets::TargetError> {
+    let mut candidates: Vec<_> = tasks
+        .iter()
+        .map(Task::value)
+        .chain(adopted.iter().map(Adoption::value))
+        .collect();
+    // Freeze/thaw recovery may coexist with the active task; select the checkout
+    // once while still including its matching recovery record in the report.
+    let recovery_targets: Vec<_> = frozen.iter().filter(|record| record.reserves())
+        .map(Frozen::value)
+        .filter(|record| !candidates.iter().any(|candidate| candidate["id"] == record["id"]))
+        .map(|record| json!({"id": record["id"], "project": string(record, "id").split_once("--").unwrap().0,
+            "repo": record["removal"]["repo"], "path": record["removal"]["path"], "branch": record["removal"]["currentBranch"]}))
+        .collect();
+    candidates.extend(recovery_targets.iter());
+    let selected = crate::targets::select_record(&candidates, selector, project)?;
+    if selected.is_none() && (selector.is_some() || project.is_some()) {
+        return Err(crate::targets::TargetError {
+            code: "TARGET_NOT_FOUND",
+            message:
+                "Current directory is not a managed worktree; supply a target or use status --all"
+                    .into(),
+            details: Value::Null,
+        });
+    }
+    Ok(selected.map(|index| candidates[index].clone()))
+}
 
 pub(crate) fn compare(left: &str, right: &str) -> Ordering {
     static COLLATOR: LazyLock<CollatorBorrowed<'static>> = LazyLock::new(|| {
@@ -26,28 +60,60 @@ fn task_columns(id: &str) -> Vec<String> {
 }
 fn setup_label(receipt: Option<&Value>) -> String {
     let Some(receipt) = receipt else {
-        return "not recorded".into();
+        return "setup unknown".into();
     };
     match string(receipt, "status") {
-        "ready" => "completed".into(),
-        "pending" | "incomplete" => format!(
-            "{} ({})",
-            string(receipt, "status"),
-            string(receipt, "step")
-        ),
-        status => status.into(),
+        "ready" => "ready".into(),
+        "pending" => format!("setting up ({})", string(receipt, "step")),
+        "incomplete" => format!("setup incomplete ({})", string(receipt, "step")),
+        "skipped" => "setup skipped".into(),
+        _ => "setup unmanaged".into(),
     }
 }
-fn task_label(task: &Value) -> String {
-    match string(task, "status") {
-        "ready" => "prepared".into(),
+fn task_label(task: &Value, receipt: Option<&Value>, multiple_receipts: bool) -> String {
+    let setup = if multiple_receipts {
+        "setup needs review".into()
+    } else {
+        setup_label(receipt)
+    };
+    let inactive = ["closed", "cleaned"].contains(&string(task, "status"));
+    let lifecycle = match string(task, "status") {
+        "closed" => "closed".into(),
         "cleaned" => match task.get("cleanup").map(|plan| string(plan, "status")) {
             Some("armed") => "cleanup pending".into(),
             Some(status) if status != "complete" => format!("cleanup {status}"),
             _ => "resources cleaned".into(),
         },
-        status => status.into(),
+        "preparing" if setup == "ready" => "setting up".into(),
+        _ => setup.clone(),
+    };
+    let mut labels = vec![lifecycle];
+    if inactive && setup != "ready" {
+        labels.push(
+            if let Some(receipt) = receipt.filter(|receipt| receipt["status"] == "pending") {
+                format!("setup pending ({})", string(receipt, "step"))
+            } else {
+                setup
+            },
+        );
     }
+    for (key, label) in [("cleanup", "cleanup"), ("retire", "retirement")] {
+        if let Some(plan) = task.get(key) {
+            let status = match string(plan, "status") {
+                "complete" => continue,
+                "armed" if key == "cleanup" && inactive => "pending",
+                "armed" => continue,
+                status => status,
+            };
+            // A successful setup receipt must not hide unfinished resource work.
+            labels.retain(|label| label != "ready");
+            let issue = format!("{label} {status}");
+            if !labels.contains(&issue) {
+                labels.push(issue);
+            }
+        }
+    }
+    labels.join(" — ")
 }
 fn return_time(record: &Value) -> Option<i64> {
     record["nextAttemptAt"]
@@ -111,7 +177,7 @@ fn frozen_table(records: &[&Value], columns: usize, indent: usize) -> String {
         })
         .collect::<Vec<_>>();
     format_table(
-        &["PROJECT", "TASK", "STATE", "RETURN (UTC)"],
+        &["PROJECT", "TASK", "STATUS", "RETURN (UTC)"],
         &rows,
         columns,
         indent,
@@ -139,10 +205,19 @@ pub fn format(
     frozen: &[Frozen],
     columns: usize,
     incomplete: bool,
+    target: Option<&Value>,
 ) -> String {
     let records = frozen_records(frozen);
     let mut matched = vec![false; setups.len()];
     let mut sections = Vec::new();
+    if let Some(target) = target {
+        sections.push(format!(
+            "{}\n  Branch: {}\n  Path: {}",
+            heading(string(target, "id")),
+            display(string(target, "branch")),
+            display(string(target, "path"))
+        ));
+    }
     if !tasks.is_empty() || !adopted.is_empty() {
         let mut rows = Vec::new();
         for task in tasks {
@@ -182,12 +257,7 @@ pub fn format(
             }
             let mut cells = task_columns(string(task, "id"));
             cells.extend([
-                task_label(task),
-                if receipts.len() > 1 {
-                    "needs review".into()
-                } else {
-                    setup_label(receipt)
-                },
+                task_label(task, receipt, receipts.len() > 1),
                 task["url"].as_str().map(str::to_owned).unwrap_or_else(|| {
                     format!("localhost:{}", task["localPort"].as_f64().unwrap())
                 }),
@@ -211,11 +281,10 @@ pub fn format(
             .any(|stage| ["failed", "pending"].contains(&stage));
             let mut cells = task_columns(string(record, "id"));
             cells.extend([
-                "adopted".into(),
                 if attention {
-                    "needs review".into()
+                    "adopted — needs review".into()
                 } else {
-                    "external".into()
+                    "adopted — external setup".into()
                 },
                 record["url"]
                     .as_str()
@@ -233,7 +302,7 @@ pub fn format(
             compare(&a.cells[0], &b.cells[0]).then_with(|| compare(&a.cells[1], &b.cells[1]))
         });
         sections.push(format_table(
-            &["PROJECT", "TASK", "STATE", "SETUP", "ADDRESS"],
+            &["PROJECT", "TASK", "STATUS", "ADDRESS"],
             &rows,
             columns,
             0,
@@ -268,7 +337,14 @@ pub fn format(
         let rows = others
             .iter()
             .map(|receipt| Row {
-                cells: vec![string(receipt, "path").into(), setup_label(Some(receipt))],
+                cells: vec![
+                    string(receipt, "path").into(),
+                    if receipt["status"] == "ready" {
+                        "setup completed".into()
+                    } else {
+                        setup_label(Some(receipt))
+                    },
+                ],
                 details: if ["incomplete", "unmanaged"].contains(&string(receipt, "status")) {
                     vec![string(receipt, "message").into()]
                 } else {
@@ -279,10 +355,17 @@ pub fn format(
         sections.push(format!(
             "{}\n{}",
             heading(&format!("Other setup records ({})", rows.len())),
-            format_table(&["CHECKOUT", "SETUP"], &rows, columns, 0, &[])
+            format_table(&["CHECKOUT", "STATUS"], &rows, columns, 0, &[])
         ));
     }
-    sections.push("Use --json for full details.".into());
+    sections.push(
+        if target.is_some() {
+            "Use --all for all worktrees; --json for full details."
+        } else {
+            "Use --json for full details."
+        }
+        .into(),
+    );
     wrap(&sections.join("\n\n"), columns)
 }
 pub fn data(
@@ -294,4 +377,110 @@ pub fn data(
 ) -> Value {
     json!({"schemaVersion": 2, "tasks": tasks.iter().map(Task::public).collect::<Vec<_>>(), "setups": setups.iter().map(Setup::value).collect::<Vec<_>>(),
         "retained": retained, "frozen": frozen.iter().filter(|r| r.reserves()).map(Frozen::public).collect::<Vec<_>>(), "adopted": adopted.iter().map(Adoption::value).collect::<Vec<_>>()})
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn receipt(status: &str) -> Value {
+        json!({"status": status, "step": "dependencies"})
+    }
+
+    #[test]
+    fn combined_status_preserves_lifecycle_and_setup_problems() {
+        for (lifecycle, setup, expected) in [
+            ("ready", Some("ready"), "ready"),
+            ("preparing", Some("ready"), "setting up"),
+            ("preparing", Some("pending"), "setting up (dependencies)"),
+            (
+                "ready",
+                Some("incomplete"),
+                "setup incomplete (dependencies)",
+            ),
+            (
+                "preparing",
+                Some("incomplete"),
+                "setup incomplete (dependencies)",
+            ),
+            ("ready", Some("skipped"), "setup skipped"),
+            ("ready", Some("unmanaged"), "setup unmanaged"),
+            ("ready", None, "setup unknown"),
+            ("preparing", None, "setup unknown"),
+            ("closed", Some("ready"), "closed"),
+            (
+                "closed",
+                Some("pending"),
+                "closed — setup pending (dependencies)",
+            ),
+            (
+                "closed",
+                Some("incomplete"),
+                "closed — setup incomplete (dependencies)",
+            ),
+            ("closed", Some("skipped"), "closed — setup skipped"),
+            ("closed", Some("unmanaged"), "closed — setup unmanaged"),
+            ("closed", None, "closed — setup unknown"),
+            ("cleaned", Some("ready"), "resources cleaned"),
+            (
+                "cleaned",
+                Some("incomplete"),
+                "resources cleaned — setup incomplete (dependencies)",
+            ),
+            ("cleaned", None, "resources cleaned — setup unknown"),
+        ] {
+            let task = json!({"status": lifecycle});
+            let receipt = setup.map(receipt);
+            assert_eq!(task_label(&task, receipt.as_ref(), false), expected);
+        }
+    }
+
+    #[test]
+    fn uncertain_receipts_never_show_ready() {
+        for (lifecycle, expected) in [
+            ("ready", "setup needs review"),
+            ("preparing", "setup needs review"),
+            ("closed", "closed — setup needs review"),
+            ("cleaned", "resources cleaned — setup needs review"),
+        ] {
+            assert_eq!(
+                task_label(&json!({"status": lifecycle}), None, true),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn unfinished_resource_work_is_visible_even_with_a_successful_setup_receipt() {
+        let ready_receipt = receipt("ready");
+        for (lifecycle, plan, expected) in [
+            ("ready", "armed", "ready"),
+            ("ready", "complete", "ready"),
+            ("ready", "queued", "cleanup queued"),
+            ("ready", "running", "cleanup running"),
+            ("ready", "failed", "cleanup failed"),
+            ("closed", "armed", "closed — cleanup pending"),
+            ("closed", "queued", "closed — cleanup queued"),
+            ("closed", "running", "closed — cleanup running"),
+            ("closed", "failed", "closed — cleanup failed"),
+            ("closed", "complete", "closed"),
+            ("cleaned", "armed", "cleanup pending"),
+            ("cleaned", "queued", "cleanup queued"),
+            ("cleaned", "running", "cleanup running"),
+            ("cleaned", "failed", "cleanup failed"),
+            ("cleaned", "complete", "resources cleaned"),
+        ] {
+            let task = json!({"status": lifecycle, "cleanup": {"status": plan}});
+            assert_eq!(task_label(&task, Some(&ready_receipt), false), expected);
+        }
+        let task = json!({"status": "ready", "cleanup": {"status":"failed"}, "retire": {"status":"running"}});
+        assert_eq!(
+            task_label(&task, Some(&ready_receipt), false),
+            "cleanup failed — retirement running"
+        );
+        assert_eq!(
+            task_label(&task, Some(&receipt("incomplete")), false),
+            "setup incomplete (dependencies) — cleanup failed — retirement running"
+        );
+    }
 }

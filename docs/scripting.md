@@ -23,6 +23,13 @@ Scripts and agents must explicitly request `--json`; output is never switched to
 JSON automatically when redirected. Envelope versions and safety/confirmation
 checks are unchanged; incomplete status/list reports follow the contract below.
 
+`status --json` now follows the same directory-sensitive scope as human output:
+inside a managed/adopted worktree it includes only that worktree, otherwise all.
+Use `status --all --json` for a cwd-independent global report, or
+`status TARGET --json` for an explicit worktree. Focused output keeps the existing arrays but
+leaves `data.retained` empty and omits unrelated records. Record validation warnings
+remain report-wide; selection does not contact Herdr.
+
 Bare `close`/`remove` (or target `@`, without `--project`) in an unmanaged Herdr
 workspace require interactive confirmation for a close-only alternative, even
 with `remove --yes` or `--json`. Noninteractive calls return
@@ -55,16 +62,22 @@ inactive states in gray. Status words remain present; color is never the only si
 Colors are disabled for redirected output, `TERM=dumb`, or when `NO_COLOR` is set
 (for example `NO_COLOR=1 graftr status`). JSON and internal worker output never
 contain generated terminal colors. Coloring does not affect table widths or wrapping.
-Headings share bold styling. `status` starts directly with its unindented table,
-without a command heading or routine explanatory footer; the `--json` hint remains.
-Its human labels distinguish worktree `prepared`, `closed` and `resources
-cleaned` from setup `completed`. JSON and stored state keep their existing values.
+Headings share bold styling. Global `status` starts directly with its unindented
+table; focused status first identifies the task, branch and checkout path.
+The `--json` hint remains; focused status also points to `--all`.
+The human `status` table combines lifecycle and setup in one `STATUS` column: `ready`,
+`setting up (STEP)`, `setup incomplete (STEP)`, `closed`, `resources cleaned`, or
+`adopted — external setup`. Missing or conflicting receipts show `setup unknown`
+or `setup needs review`. Cleanup/retirement problems remain visible, including
+on closed tasks; failures take color precedence over lifecycle labels.
+`ready` means recorded Graftr setup completed, not that an app is running or healthy.
+JSON and stored state keep their separate existing values and schemas.
 `status --json` omits recorded hook commands and context from both cleanup and
 retirement plans. Hook names, timeouts, state, attempts and results remain visible;
 private persisted plans are unchanged.
 `graftr history` separately shows
 retained storage as a category/count/size/oldest-date table. Its `--json` result has
-`data.retained`; the existing `status --json` retained metadata is unchanged.
+`data.retained`; global `status --all --json` retains the same metadata.
 Maintenance commands (`env refresh`, `prune`, `migrate`) use yellow
 for previews or differences, green for applied results, and red for blocked changes.
 Environment refresh still exposes key names/actions only, never private values.

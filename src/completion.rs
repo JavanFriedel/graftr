@@ -175,6 +175,15 @@ pub fn complete(paths: &Paths, words: &[String], catalog: &Catalog) -> Result<Ve
                 .command_flags(command.unwrap_or(""))
                 .into_iter()
                 .filter(|flag| {
+                    command != Some("adopt") || flag != "--dry-run" || used.contains("--provision")
+                })
+                .filter(|flag| {
+                    command != Some("status")
+                        || !(flag == "--all"
+                            && (!positionals.is_empty() || used.contains("--project"))
+                            || flag == "--project" && used.contains("--all"))
+                })
+                .filter(|flag| {
                     !used.contains(flag)
                         || flag == "--take-baseline"
                         || flag == "--hook"
@@ -189,6 +198,9 @@ pub fn complete(paths: &Paths, words: &[String], catalog: &Catalog) -> Result<Ve
         } else {
             vec![]
         }));
+    }
+    if command == Some("status") && used.contains("--all") && pending_.is_none() {
+        return Ok(vec![]);
     }
     let projects = config::projects(paths).unwrap_or_default();
     if pending_ == Some("project")
@@ -392,7 +404,7 @@ pub fn complete(paths: &Paths, words: &[String], catalog: &Catalog) -> Result<Ve
             },
         ]);
     }
-    if ["logs", "doctor", "transfer"].contains(&command) {
+    if ["logs", "doctor", "transfer", "status"].contains(&command) {
         candidates.extend(
             records::adoptions(&paths.state)?
                 .iter()

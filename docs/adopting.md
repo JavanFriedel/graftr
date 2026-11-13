@@ -94,6 +94,45 @@ Backups contain secrets and use the existing retention/pruning policy. Stop exte
 writers before applying; locks serialize Graftr, not arbitrary editors. No automatic
 rollback, process restart or shell environment refresh occurs.
 
+## Restore managed setup after a machine migration
+
+An adopted checkout with no environment or assigned address can explicitly transfer
+to full Graftr management without moving files or recreating its branch:
+
+```sh
+graftr adopt /path/to/worktree --provision --dry-run
+graftr adopt /path/to/worktree --provision
+```
+
+This is intentionally separate from preserve-only adoption. It requires an existing
+adoption with no manual port/URL, root `.env`, recorded Herdr attachment, selected
+adoption-stage history or setup receipts. Conflicting ownership, frozen reservations,
+changed branches, locked/detached checkouts and active setup are refused. A configured
+environment baseline must be private, canonical and owned by you; `.env` must be
+ignored by Git. Existing/manual setups are not overwritten or claimed.
+
+Preview is entirely read-only and reserves no ports. Apply preserves the existing
+ID/path/branch and dirty work, allocates fresh local/optional HTTPS/named ports, and
+runs normal configured setup: environment generation, installers and setup hooks.
+Only use trusted development profiles. Configured hooks can provision external
+resources, including private Tailscale routes. Application servers are not started.
+The conversion is standalone and synchronous; it never contacts or changes Herdr.
+Use `graftr open TARGET` afterward when workspace attachment is wanted.
+
+The exact previous adoption file is backed up privately in `migration-backups`,
+under the usual history retention policy. The new managed task and a setup receipt
+are durable **before** external tracking is removed. A setup failure retains managed
+ownership and port leases; review status/logs and deliberately retry `setup --no-herdr`
+inside the checkout. Repeating `adopt --provision` never silently replays setup.
+An interruption during the ownership transfer may leave both records, which refuse
+ordinary setup/lifecycle commands. Preserve both and the backup for review rather
+than deleting state to bypass the conflict. No automatic rollback or branch reset.
+
+Successful and incomplete conversion JSON uses the normal setup result and outcome,
+not the ordinary adoption `data.worktree` shape. Preview returns `data.status: "preview"`
+and proposed public addresses only. Never combine `--provision` with individual
+adoption-stage flags; `--dry-run` on `adopt` requires `--provision`.
+
 ## Stored state and JSON
 
 Schema-1 records live in `$XDG_STATE_HOME/graftr/adopted/` (normally

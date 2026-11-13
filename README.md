@@ -61,6 +61,7 @@ Create `~/.config/graftr/projects.json` (XDG overrides are supported):
 ```sh
 graftr create my-project fix-login
 graftr status
+graftr status --all
 graftr close my-project--fix-login
 graftr open my-project--fix-login
 graftr freeze my-project--fix-login --note "Return after review"
@@ -74,6 +75,11 @@ ignored files but keeps the branch. `nuke` additionally deletes a verified merge
 local branch, with typed terminal confirmation. `freeze` reclaims the checkout's
 disk space and retains recovery metadata; `thaw` regenerates setup, not ignored files.
 Dirty work is not silently stashed, discarded or committed.
+
+Inside a managed worktree, `graftr status` shows that worktree (including from
+nested directories); elsewhere it shows the full overview. Use `status --all`
+for everything, or `status TARGET` for an exact name, branch, path or task ID.
+Scripts needing the full inventory should use `status --all --json`.
 
 Transfer dry runs inspect readiness without changing either machine. A missing
 destination project produces a migration proposal with destination-local settings;

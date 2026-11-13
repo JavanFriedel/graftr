@@ -224,6 +224,12 @@ fn validate_flags(command: &str, flags: &BTreeMap<String, String>) -> Result<(),
             "--yes is only valid for remove/freeze",
         ),
         ("live", &["doctor"][..], "--live is only valid for doctor"),
+        ("all", &["status"][..], "--all is only valid for status"),
+        (
+            "provision",
+            &["adopt"][..],
+            "--provision is only valid for adopt",
+        ),
         ("latest", &["logs"][..], "--latest is only valid for logs"),
     ] {
         if has(key) && !commands.contains(&command) {
@@ -287,10 +293,20 @@ fn validate_flags(command: &str, flags: &BTreeMap<String, String>) -> Result<(),
     if has("retry-hooks") && command != "transfer" {
         return Err("--retry-hooks is only valid for transfer".into());
     }
-    for key in ["dry-run", "approve-project", "destination-config"] {
+    for key in ["approve-project", "destination-config"] {
         if has(key) && command != "transfer" {
             return Err(format!("--{key} is only valid for transfer"));
         }
+    }
+    if has("dry-run") && command != "transfer" && !(command == "adopt" && has("provision")) {
+        return Err("--dry-run is only valid for transfer or adopt --provision".into());
+    }
+    if has("provision")
+        && ["install", "environment", "apply", "take-baseline", "hook"]
+            .iter()
+            .any(|key| has(key))
+    {
+        return Err("--provision runs the full configured setup; do not combine it with individual adoption stages".into());
     }
     if has("dry-run") && has("approve-project") {
         return Err("--dry-run never applies a project proposal; omit --approve-project".into());
@@ -383,7 +399,7 @@ fn validate_flags(command: &str, flags: &BTreeMap<String, String>) -> Result<(),
     if has("project")
         && ![
             "open", "close", "cleanup", "remove", "nuke", "health", "doctor", "env", "label",
-            "logs", "freeze", "thaw", "schedule", "adopt", "transfer",
+            "logs", "freeze", "thaw", "schedule", "adopt", "transfer", "status",
         ]
         .contains(&command)
     {
@@ -745,6 +761,18 @@ fn execute(
     }
     if command == "doctor" && positionals.len() > 2 {
         return Err("Unexpected doctor arguments".to_owned().into());
+    }
+    if command == "status" {
+        if positionals.len() > 2 {
+            return Err("status accepts one optional worktree target"
+                .to_owned()
+                .into());
+        }
+        if flags.contains_key("all") && (positionals.len() > 1 || flags.contains_key("project")) {
+            return Err("--all cannot be combined with a target or --project"
+                .to_owned()
+                .into());
+        }
     }
     if ["health", "label"].contains(&command) && positionals.len() > 2 {
         return Err(format!("Unexpected {command} arguments").into());
@@ -1350,6 +1378,31 @@ fn execute(
         if positionals.len() > 2 {
             return Err("adopt accepts one optional PATH".to_owned().into());
         }
+        if flags.contains_key("provision") {
+            return match adopt::provision(
+                &paths,
+                positionals.get(1).map(String::as_str),
+                flags.get("project").map(String::as_str),
+                flags.contains_key("dry-run"),
+                progress,
+            )? {
+                adopt::ProvisionResult::Setup(result) => {
+                    output_setup(command, &result, json, progress)
+                }
+                adopt::ProvisionResult::Preview(report) => Ok(Reply::Line(if json {
+                    serde_json::to_string_pretty(&envelope(
+                        Some(command),
+                        "completed",
+                        report,
+                        Value::Null,
+                        progress,
+                    ))
+                    .unwrap()
+                } else {
+                    adopt::format_provision_preview(&report, terminal::columns())
+                })),
+            };
+        }
         let options = adopt::Options {
             project: flags.get("project").cloned(),
             install: flags.contains_key("install"),
@@ -1553,7 +1606,13 @@ fn execute(
             )
         }));
     }
-    if positionals.len() > if command == "frozen" { 2 } else { 1 } {
+    if positionals.len()
+        > if ["frozen", "status"].contains(&command) {
+            2
+        } else {
+            1
+        }
+    {
         if command == "frozen" {
             return Err("frozen accepts an optional PROJECT".to_owned().into());
         }
@@ -1599,22 +1658,52 @@ fn execute(
         }));
     }
     if command == "status" {
-        let tasks = records::task_report(state)?;
-        let setups = records::setup_report(state)?;
-        let frozen = records::frozen_report(state)?;
-        let adopted = records::adoption_report(state)?;
+        let mut tasks = records::task_report(state)?;
+        let mut setups = records::setup_report(state)?;
+        let mut frozen = records::frozen_report(state)?;
+        let mut adopted = records::adoption_report(state)?;
+        let target = if flags.contains_key("all") {
+            None
+        } else {
+            status::target(
+                &tasks.records,
+                &adopted.records,
+                &frozen.records,
+                positionals.get(1).map(String::as_str),
+                flags.get("project").map(String::as_str),
+            )
+            .map_err(|error| Failure::target_at(error, "target"))?
+        };
+        if let Some(target) = &target {
+            tasks.records.retain(|record| {
+                record.value()["id"] == target["id"] && record.value()["path"] == target["path"]
+            });
+            adopted.records.retain(|record| {
+                record.value()["id"] == target["id"] && record.value()["path"] == target["path"]
+            });
+            setups
+                .records
+                .retain(|record| record.value()["path"] == target["path"]);
+            frozen
+                .records
+                .retain(|record| record.value()["id"] == target["id"]);
+        }
         let mut issues = tasks.issues;
         issues.extend(setups.issues);
         issues.extend(frozen.issues);
         issues.extend(adopted.issues);
         let incomplete = !issues.is_empty();
         let data = if json {
-            let retained = history::read(state).map_err(|message| Failure {
-                message,
-                phase: "operation",
-                code: "OPERATION_FAILED",
-                details: Value::Null.into(),
-            })?;
+            let retained = if target.is_some() {
+                Vec::new()
+            } else {
+                history::read(state).map_err(|message| Failure {
+                    message,
+                    phase: "operation",
+                    code: "OPERATION_FAILED",
+                    details: Value::Null.into(),
+                })?
+            };
             status::data(
                 &tasks.records,
                 &setups.records,
@@ -1636,6 +1725,7 @@ fn execute(
                     &frozen.records,
                     terminal::columns(),
                     incomplete,
+                    target.as_ref(),
                 )
             },
             issues,
@@ -1715,7 +1805,7 @@ fn main() -> ExitCode {
                 }
                 return ExitCode::FAILURE;
             }
-            let dry_run = command.as_deref() == Some("transfer")
+            let dry_run = [Some("transfer"), Some("adopt")].contains(&command.as_deref())
                 && before_separator.iter().any(|s| s == "--dry-run");
             let recovery = if error.phase == "arguments" {
                 vec![
@@ -1729,7 +1819,7 @@ fn main() -> ExitCode {
                     },
                 ]
             } else if dry_run {
-                vec!["This dry run changed no project, checkout or Graftr state. Review the preflight/SSH/configuration error, correct it and rerun --dry-run; no installers or hooks were executed.".into()]
+                vec!["This dry run changed no project, checkout or Graftr state. Review the preflight/configuration error, correct it and rerun --dry-run; no installers or hooks were executed.".into()]
             } else if error.phase == "state" {
                 vec!["Review the registry/configuration error before retrying. Keep ownership records and port leases together; do not delete them to bypass a conflict.".into()]
             } else if error.phase == "target" {
@@ -1779,6 +1869,10 @@ fn main() -> ExitCode {
             .contains(&command.as_deref())
             {
                 vec!["Inspect graftr status and the recorded progress; verify Git, Herdr, and any hook-managed external state before retrying.".into(), if command.as_deref() == Some("nuke") {"Fix the reported issue and rerun nuke with terminal confirmation; never force deletion."} else {"Do not assume rollback or blindly retry after an uncertain external request. Preserve records and leases for review."}.into()]
+            } else if command.as_deref() == Some("adopt")
+                && before_separator.iter().any(|arg| arg == "--provision")
+            {
+                vec!["Inspect status and the private migration-backups before retrying. Ownership may have transferred even if setup failed; keep task records and leases.".into(), "If only the managed record remains, review logs and deliberately retry setup --no-herdr inside the checkout. If both adoption and task records remain, preserve both for review; do not delete state to force conversion.".into()]
             } else if error.code == "ADOPTED_EXTERNAL" || command.as_deref() == Some("adopt") {
                 vec!["Keep the existing checkout, environment and manual services. Inspect graftr status, list and logs before explicitly retrying a selected adoption stage.".into(), "Default adoption never replays stages. Use adopt --environment to preview environment changes; built-in resource publishers and automatic lifecycle cleanup are not enabled for externally configured worktrees.".into()]
             } else if [Some("frozen"), Some("logs")].contains(&command.as_deref()) {

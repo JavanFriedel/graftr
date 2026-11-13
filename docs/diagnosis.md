@@ -2,6 +2,57 @@
 
 Part of the [Graftr guide](../README.md).
 
+## Worktree status
+
+```bash
+graftr status                         # this managed worktree, otherwise the full overview
+graftr status fix-login               # exact checkout name, branch, path, or full ID
+graftr status fix-login --project my-project
+graftr status --all                   # full overview from any directory
+graftr status --all --json            # explicit global scope for scripts
+```
+
+Inside a managed or adopted worktree, including nested directories, bare `status`
+shows only that worktree, its setup receipts, addresses and any matching recovery
+record. The focused heading identifies the task, branch and checkout path. Outside
+one, the existing cross-project overview remains the default, including from a
+project's main checkout or an unmanaged linked worktree. Selection never contacts
+Herdr or probes applications; this is recorded state, not a live health check.
+
+`status @` explicitly requests the current managed directory and fails outside
+one. `--project` restricts target selection rather than listing a project's tasks;
+use `list PROJECT` for that inventory. `--all` cannot combine with a target or
+`--project`. Frozen tasks can also be selected by their recorded name/branch/path/ID.
+Ambiguous targets are errors, never an arbitrary match.
+
+Human and JSON output use the same scope. Focused JSON preserves the existing
+task/setup/adopted/frozen arrays with only matching records and an empty `retained`
+array. Use `status --all --json` to preserve the former cwd-independent global
+behavior, or `history --json` for retained storage separately. Validation warnings
+remain report-wide; damaged records are never silently treated as absent.
+
+`graftr status` combines lifecycle and setup into one human `STATUS` column:
+
+| Status | Meaning |
+| --- | --- |
+| `ready` | Setup completed with no cleanup/retirement problems recorded. Not proof that an application is running or healthy. |
+| `setting up (STEP)` | The latest receipt records queued/running setup at that step. Worker liveness is not checked. |
+| `setup incomplete (STEP)` | Setup failed, was interrupted or was cancelled before completion. |
+| `setup skipped` / `setup unmanaged` | Setup was explicitly skipped or Graftr could not establish managed setup. |
+| `setup unknown` / `setup needs review` | A setup receipt is missing or multiple receipts prevent a trustworthy result. |
+| `closed` | Task recorded as closed; checkout and assigned ports retained. |
+| `resources cleaned` | Configured resource cleanup finished; checkout retained. |
+| `cleanup pending/queued/running/failed` | Resource cleanup is unfinished or failed. |
+| `adopted — external setup` | Tracking only; setup remains externally managed. Selected-stage problems show `adopted — needs review`. |
+| `freezing` / `frozen` / `thawing` / `attention` | Freeze/return lifecycle or manual recovery review. |
+
+Problem qualifiers remain visible with inactive lifecycle labels, for example
+`closed — setup incomplete (dependencies)` or `closed — cleanup failed`.
+Retirement problems are likewise included. Combined labels use the most severe
+color, so a closed task with failed cleanup stays red. Other setup records show
+`setup completed`, not `ready`, because they do not establish managed ownership.
+JSON and stored lifecycle/setup fields remain separate and unchanged.
+
 ## Incomplete status and inventory
 
 `graftr status` and `graftr list PROJECT` isolate invalid individual task, setup,

@@ -82,6 +82,21 @@ pub fn at_path(
     project: Option<&str>,
     reject_file: bool,
 ) -> Result<Vec<usize>> {
+    record_paths(
+        &tasks.iter().map(Task::value).collect::<Vec<_>>(),
+        selector,
+        cwd,
+        project,
+        reject_file,
+    )
+}
+fn record_paths(
+    records: &[&Value],
+    selector: &str,
+    cwd: &Path,
+    project: Option<&str>,
+    reject_file: bool,
+) -> Result<Vec<usize>> {
     let mut path = resolve_path(cwd, selector)?;
     let mut present = false;
     match fs::canonicalize(&path) {
@@ -102,40 +117,53 @@ pub fn at_path(
         Err(e) => return Err(e.to_string().into()),
     }
     let path = path.to_string_lossy();
-    Ok(tasks
+    Ok(records
         .iter()
         .enumerate()
         .filter(|(_, t)| {
             (if present {
-                at_directory(t.value(), &path)
+                at_directory(t, &path)
             } else {
-                t.value()["path"].as_str() == Some(&path)
-            }) && project.is_none_or(|project| t.value()["project"] == project)
+                t["path"].as_str() == Some(&path)
+            }) && project.is_none_or(|project| t["project"] == project)
         })
         .map(|(index, _)| index)
         .collect())
 }
 pub fn short_matches(tasks: &[Task], selector: &str, project: Option<&str>) -> Vec<usize> {
-    tasks
+    record_aliases(
+        &tasks.iter().map(Task::value).collect::<Vec<_>>(),
+        selector,
+        project,
+    )
+}
+fn record_aliases(records: &[&Value], selector: &str, project: Option<&str>) -> Vec<usize> {
+    records
         .iter()
         .enumerate()
         .filter(|(_, t)| {
-            project.is_none_or(|project| t.value()["project"] == project)
-                && (basename(t.value()["path"].as_str().unwrap()) == selector
-                    || t.value()["branch"] == selector)
+            project.is_none_or(|project| t["project"] == project)
+                && (basename(t["path"].as_str().unwrap()) == selector || t["branch"] == selector)
         })
         .map(|(i, _)| i)
         .collect()
 }
 pub fn infer_project(tasks: &[Task], cwd: &Path, project: Option<&str>) -> Result<Option<String>> {
+    record_project(
+        &tasks.iter().map(Task::value).collect::<Vec<_>>(),
+        cwd,
+        project,
+    )
+}
+fn record_project(records: &[&Value], cwd: &Path, project: Option<&str>) -> Result<Option<String>> {
     if let Some(project) = project {
         name(project)?;
         return Ok(Some(project.into()));
     }
     let cwd_text = cwd.to_string_lossy();
-    let mut candidates: Vec<_> = tasks
+    let mut candidates: Vec<_> = records
         .iter()
-        .filter(|t| at_directory(t.value(), &cwd_text))
+        .filter(|t| at_directory(t, &cwd_text))
         .collect();
     if candidates.is_empty() {
         let result = system::run(
@@ -154,15 +182,12 @@ pub fn infer_project(tasks: &[Task], cwd: &Path, project: Option<&str>) -> Resul
         if result.exit_code == 0
             && let Some(main) = inventory::parse(&result.stdout)?.first()
         {
-            candidates = tasks
-                .iter()
-                .filter(|t| t.value()["repo"] == main.path)
-                .collect();
+            candidates = records.iter().filter(|t| t["repo"] == main.path).collect();
         }
     }
     let projects: HashSet<_> = candidates
         .iter()
-        .map(|t| t.value()["project"].as_str().unwrap())
+        .map(|t| t["project"].as_str().unwrap())
         .collect();
     ensure(
         projects.len() <= 1,
@@ -171,22 +196,26 @@ pub fn infer_project(tasks: &[Task], cwd: &Path, project: Option<&str>) -> Resul
     Ok(projects.into_iter().next().map(str::to_owned))
 }
 fn require_project(task: Task, project: Option<&str>) -> TargetResult<Task> {
+    require_record_project(task.value(), project)?;
+    Ok(task)
+}
+fn require_record_project(task: &Value, project: Option<&str>) -> TargetResult<()> {
     if let Some(project) = project
-        && task.value()["project"] != project
+        && task["project"] != project
     {
         return Err(format!(
             "Worktree {} belongs to project {}, not {}",
-            task.value()["id"],
-            task.value()["project"],
+            task["id"],
+            task["project"],
             json!(project)
         )
         .into());
     }
-    Ok(task)
+    Ok(())
 }
-fn ambiguous(selector: &str, tasks: &[&Task]) -> TargetError {
+fn ambiguous(selector: &str, tasks: &[&Value]) -> TargetError {
     let candidates: Vec<_> = tasks.iter().map(|task| {
-        let task = task.value(); json!({"id": task["id"], "project": task["project"], "branch": task["branch"], "path": task["path"]})
+        json!({"id": task["id"], "project": task["project"], "branch": task["branch"], "path": task["path"]})
     }).collect();
     let choices = candidates
         .iter()
@@ -222,37 +251,75 @@ pub fn resolve_managed(
         return require_project(records::task(&paths.state, selector)?, project).map(Some);
     }
     let tasks = records::tasks(&paths.state)?;
+    let values = tasks.iter().map(Task::value).collect::<Vec<_>>();
+    select_record(&values, selector, project).map(|index| index.map(|index| tasks[index].clone()))
+}
+// Selection over validated records also serves tolerant, read-only reports. Strict
+// lifecycle callers still load their records through resolve_managed above.
+pub fn select_record(
+    records: &[&Value],
+    selector: Option<&str>,
+    project: Option<&str>,
+) -> TargetResult<Option<usize>> {
+    if let Some(project) = project {
+        name(project)?;
+    }
+    let exact: Vec<_> = records
+        .iter()
+        .enumerate()
+        .filter(|(_, record)| record["id"].as_str() == selector)
+        .map(|(index, _)| index)
+        .collect();
+    if exact.len() > 1 {
+        return Err(ambiguous(
+            selector.unwrap(),
+            &exact
+                .iter()
+                .map(|index| records[*index])
+                .collect::<Vec<_>>(),
+        ));
+    }
+    if let Some(index) = exact.first() {
+        require_record_project(records[*index], project)?;
+        return Ok(Some(*index));
+    }
     let cwd = env::current_dir()
         .and_then(fs::canonicalize)
         .map_err(|_| TargetError::from("Current directory is unavailable"))?;
     if selector.is_none() || selector == Some("@") {
-        let matches: Vec<_> = tasks
+        let matches: Vec<_> = records
             .iter()
-            .filter(|t| at_directory(t.value(), &cwd.to_string_lossy()))
+            .enumerate()
+            .filter(|(_, t)| at_directory(t, &cwd.to_string_lossy()))
+            .map(|(index, _)| index)
             .collect();
         if matches.len() > 1 {
-            return Err(ambiguous("current directory", &matches));
+            return Err(ambiguous(
+                "current directory",
+                &matches.iter().map(|i| records[*i]).collect::<Vec<_>>(),
+            ));
         }
-        return matches
-            .first()
-            .map(|task| require_project((*task).clone(), project))
-            .transpose();
+        if let Some(index) = matches.first() {
+            require_record_project(records[*index], project)?;
+            return Ok(Some(*index));
+        }
+        return Ok(None);
     }
     let selector = selector.unwrap();
     let explicit = explicit_path(selector);
-    let paths_ = at_path(&tasks, selector, &cwd, project, explicit)?;
+    let paths_ = record_paths(records, selector, &cwd, project, explicit)?;
     let matches = if explicit {
         paths_
     } else {
-        let scope = infer_project(&tasks, &cwd, project)?;
+        let scope = record_project(records, &cwd, project)?;
         let mut matches: Vec<_> = paths_
             .into_iter()
             .filter(|i| {
                 scope
                     .as_deref()
-                    .is_none_or(|project| tasks[*i].value()["project"] == project)
+                    .is_none_or(|project| records[*i]["project"] == project)
             })
-            .chain(short_matches(&tasks, selector, scope.as_deref()))
+            .chain(record_aliases(records, selector, scope.as_deref()))
             .collect();
         let mut seen = HashSet::new();
         matches.retain(|index| seen.insert(*index));
@@ -261,11 +328,11 @@ pub fn resolve_managed(
     if matches.len() > 1 {
         return Err(ambiguous(
             selector,
-            &matches.iter().map(|i| &tasks[*i]).collect::<Vec<_>>(),
+            &matches.iter().map(|i| records[*i]).collect::<Vec<_>>(),
         ));
     }
     if let Some(index) = matches.first() {
-        return Ok(Some(tasks[*index].clone()));
+        return Ok(Some(*index));
     }
     Err(TargetError {
         code: "TARGET_NOT_FOUND",

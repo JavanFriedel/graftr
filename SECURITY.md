@@ -16,6 +16,15 @@ caches. Review the confirmation and save anything you need first. Git branches d
 recover ignored files. Operations spanning Git, Herdr, the filesystem and external
 hooks are not one atomic transaction; preserve records/leases after partial failures.
 
+Adoption alone grants no provisioning or cleanup ownership. Explicit
+`adopt --provision` is restricted to addressless checkouts without a manual `.env`,
+recorded attachment, selected-stage history or setup receipt. It backs up external
+tracking, records the new managed task before retiring adoption, and then runs the
+approved profile. Manual routes/environments are never taken over. Setup failures
+retain managed leases; interrupted ownership transfers require review, not deletion
+of a conflicting record. `adopt --provision --dry-run` changes nothing and reserves
+no addresses.
+
 Configuration and state resolve from HOME/XDG paths; no account, tailnet, repository
 path or project name is built into the executable. Supported platform assumptions
 (Linux/Unix APIs, optional systemd) are documented, not portable-platform guarantees.

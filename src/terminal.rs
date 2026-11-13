@@ -43,29 +43,44 @@ pub(crate) fn status_color(value: &str) -> String {
     if !colors_enabled() {
         return value.into();
     }
-    let normalized = value.to_lowercase();
-    let code = |key: &str| match key {
-        "ready" | "prepared" | "healthy" | "thawed" | "complete" | "completed" | "installed"
-        | "refreshed" | "ok" | "applied" | "same" | "managed" => Some(32),
-        "closed" | "pending" | "preparing" | "closing" | "removing" | "freezing" | "thawing"
-        | "deferred" | "cleanup pending" | "cleanup queued" | "cleanup running" | "unknown"
-        | "unmanaged" | "external" | "not recorded" | "needs review" | "preview" | "missing"
-        | "different" | "add" | "replace" | "delete" | "not recognized" => Some(33),
-        "frozen" => Some(34),
-        "adopted" => Some(36),
-        "failed" | "incomplete" | "unhealthy" | "attention" | "blocked" | "cleanup failed" => {
-            Some(31)
-        }
-        "cleaned" | "removed" | "nuked" | "skipped" | "unchanged" | "not-configured"
-        | "not-checked" | "local-only" | "preserve" | "kept" | "deleted" | "resources cleaned" => {
-            Some(90)
-        }
-        _ => None,
-    };
-    match code(&normalized).or_else(|| code(normalized.split(' ').next().unwrap_or(""))) {
+    match status_code(value) {
         Some(color) => format!("\x1b[{color}m{value}\x1b[0m"),
         None => value.into(),
     }
+}
+
+fn status_code(value: &str) -> Option<u8> {
+    let normalized = value.to_lowercase();
+    let code = |key: &str| match key {
+        "ready" | "prepared" | "healthy" | "thawed" | "complete" | "completed" | "installed"
+        | "refreshed" | "ok" | "applied" | "same" | "managed" | "setup completed" => Some(32),
+        "closed" | "pending" | "preparing" | "closing" | "removing" | "freezing" | "thawing"
+        | "deferred" | "cleanup pending" | "cleanup queued" | "cleanup running" | "unknown"
+        | "unmanaged" | "external" | "not recorded" | "needs review" | "preview" | "missing"
+        | "different" | "add" | "replace" | "delete" | "not recognized" | "setting up"
+        | "setup pending" | "setup unknown" | "setup needs review" | "setup unmanaged"
+        | "retirement queued" | "retirement running" => Some(33),
+        "frozen" => Some(34),
+        "adopted" => Some(36),
+        "failed" | "incomplete" | "unhealthy" | "attention" | "blocked" | "cleanup failed"
+        | "retirement failed" | "setup incomplete" => Some(31),
+        "cleaned" | "removed" | "nuked" | "skipped" | "unchanged" | "not-configured"
+        | "not-checked" | "local-only" | "preserve" | "kept" | "deleted" | "resources cleaned"
+        | "setup skipped" => Some(90),
+        _ => None,
+    };
+    normalized
+        .split(" — ")
+        .filter_map(|label| {
+            code(label)
+                .or_else(|| code(label.split(" (").next().unwrap_or(label)))
+                .or_else(|| code(label.split(' ').next().unwrap_or("")))
+        })
+        .min_by_key(|color| match color {
+            31 => 0,
+            33 => 1,
+            _ => 2,
+        })
 }
 
 fn sgr_len(text: &str) -> Option<usize> {
@@ -285,7 +300,7 @@ pub fn format_table(
         visible -= 1;
     }
     let styled = |value: &str, index: usize| {
-        if ["STATE", "SETUP", "RESULT"].contains(&headers[index]) {
+        if ["STATE", "SETUP", "STATUS", "RESULT"].contains(&headers[index]) {
             status_color(value)
         } else {
             value.into()
@@ -373,6 +388,28 @@ pub fn format_table(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn combined_status_colors_prioritize_problems_over_lifecycle() {
+        for (label, color) in [
+            ("ready", 32),
+            ("setting up (dependencies)", 33),
+            ("setup unknown", 33),
+            ("setup needs review", 33),
+            ("setup skipped", 90),
+            ("setup incomplete (dependencies)", 31),
+            ("closed — setup incomplete (dependencies)", 31),
+            ("closed — cleanup failed", 31),
+            ("setup unknown — cleanup failed", 31),
+            ("cleanup failed — retirement running", 31),
+            ("adopted — needs review", 33),
+            ("adopted — external setup", 33),
+            ("resources cleaned", 90),
+            ("frozen", 34),
+        ] {
+            assert_eq!(status_code(label), Some(color), "{label}");
+        }
+    }
 
     #[test]
     fn wrapping_preserves_graphemes_indentation_and_styles() {

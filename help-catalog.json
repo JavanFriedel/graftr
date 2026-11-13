@@ -45,7 +45,7 @@
         "entries": [
           [
             "status",
-            "Show all managed tasks and their setup results"
+            "Show worktree status here, or across all projects"
           ],
           [
             "history",
@@ -141,6 +141,12 @@
   },
   "footer": "New to Graftr? Run 'graftr help getting-started'.",
   "cliOptions": {
+    "provision": {
+      "type": "boolean"
+    },
+    "all": {
+      "type": "boolean"
+    },
     "base": {
       "type": "string"
     },
@@ -274,6 +280,14 @@
       ],
       "options": [
         [
+          "--provision",
+          "Explicitly convert an addressless adopted checkout without .env or attachment to full managed setup, synchronously."
+        ],
+        [
+          "--dry-run",
+          "With --provision, preview proposed addresses without changing records, files, services or reservations."
+        ],
+        [
           "--install",
           "Explicitly run the project's dependency installer."
         ],
@@ -311,10 +325,12 @@
         "graftr adopt . --install",
         "graftr adopt . --environment",
         "graftr adopt . --environment --apply",
+        "graftr adopt . --provision --dry-run",
+        "graftr adopt . --provision",
         "graftr adopt . --hook afterDependencies/check"
       ],
       "notes": "Default adoption registers the existing path/branch and observes an existing\nHerdr attachment and public PORT/BASE_URL from an owner-written root .env when available.\nNo port allocation, environment writes, installers, hooks, workspace creation or\nrenaming occurs. Dirty work is allowed and never stashed or committed.\nSetup is external, not verified by Graftr. Unknown addresses stay unassigned.\nRepeated default adoption is a no-op, including after a failed selected stage.\n\nStages are independent, synchronous and opt-in on each invocation. Order is environment,\nafterEnvironment hooks, installation, then afterDependencies hooks. Hook names alone\nare accepted only when unambiguous. No cleanup/retire hooks are armed. Built-in\nTailscale/Postgres publishers require provisioned ownership and cannot be run here;\nmanual routes/databases are never claimed, changed or deleted by adoption.\n\n--environment without --apply is fully read-only, including the registry. It requires\nan existing private untracked .env and an approved separate .env baseline. Preview\nfirst; --apply adds missing non-address keys and only replaces keys explicitly\nselected with --take-baseline. Existing public port/URL assignments are protected.\nSecret-bearing backups stay outside Git. Existing shell environments are not restarted.\nInstallers and selected hooks can have arbitrary effects; private logs and stage\nresults survive failures. Nothing is automatically retried or rolled back.\n\nAdopted worktrees appear in status/list and support logs/doctor. Automatic setup,\nopen/close/cleanup/removal/freeze operations remain disabled for external setup;\nmanage the workspace and Git checkout directly. Adoption is tracking, not implicit\nconversion to Graftr-provisioned service ownership.",
-      "targetNote": null
+      "targetNote": "--provision is an explicit transfer of lifecycle ownership, not normal adoption.\nIt requires an existing adoption with no manual address, .env, recorded Herdr\nattachment, selected-stage history or setup receipt. It refuses identity changes,\nactive setup and conflicting/frozen ownership. An approved private development\nbaseline is required when envSource is configured, and .env must be ignored.\n\nConversion preserves the ID, path, branch and dirty work, allocates fresh addresses,\narchives the old adoption privately in migration-backups, then runs the project's\nnormal environment, installer and hooks. It never starts application servers.\nIt runs standalone without changing Herdr; use open later to attach.\nDo not combine it with individual adoption stages. Preview ports are not reserved.\n\nSetup failures retain the managed record and leases; inspect status/logs and retry\nsetup --no-herdr deliberately. If ownership transfer itself is interrupted, preserve\nboth records and the backup for review; do not delete one to force setup.\nAfter success, JSON uses the normal setup result rather than data.worktree."
     },
     "plugin": {
       "summary": "Install the bundled Graftr Herdr plugin",
@@ -615,14 +631,27 @@
       "targetNote": null
     },
     "status": {
-      "summary": "Show all managed tasks and their setup results",
-      "usage": "[options]",
+      "summary": "Show worktree status here, or across all projects",
+      "usage": "[TARGET] [options]",
+      "arguments": [
+        ["TARGET", "Checkout name, branch, path, or full ID; defaults to this managed worktree, otherwise all."]
+      ],
       "examples": [
         "graftr status",
-        "graftr status --json"
+        "graftr status fix-login",
+        "graftr status --all",
+        "graftr status --all --json"
       ],
-      "notes": "Shows a readable overview of managed worktrees, setup state and addresses,\nplus frozen work, scheduled returns, retries and recovery messages across projects.\nAdopted worktrees show adopted/external; no setup success or unknown address is invented.\nProject and task names have separate columns; full PROJECT--TASK IDs still work\nas command selectors and remain unchanged in JSON output.\nRetained logs and backups are reported separately by graftr history.\nUse --json for full task records, setup receipts, dependency results, recorded timings\nand retained-history details in the versioned result envelope.\nCleanup summaries never include recorded argv or environment context.\nHuman STATE labels include prepared, closed and resources cleaned;\nSETUP completed means the configured setup finished, not that a server is running.\nDependency installation may be explicitly skipped or not configured.\nPending means setup is queued or running. JSON retains the existing status values.\nThis is recorded state, not a live application health check.\nInvalid record files produce an incomplete report with validated rows and exit 1.\nJSON uses outcome partial and data.recordIssues; file contents are never echoed.\nPreserve damaged records and their leases; status never repairs or deletes them.",
+      "notes": "Inside a managed or adopted worktree (including nested directories), shows only\nthat worktree, its setup state, addresses and matching recovery records.\nElsewhere, shows the full overview across projects. --all always shows everything.\n\nOne human STATUS column combines lifecycle and setup: ready, setting up (STEP),\nsetup incomplete (STEP), closed, resources cleaned, or adopted — external setup.\nMissing/conflicting receipts show setup unknown or setup needs review.\nCleanup/retirement problems remain visible, for example closed — cleanup failed.\nReady means Graftr setup completed, not that an application is running or healthy.\nDependency installation may be explicitly skipped or not configured.\nThis is recorded state, not a live application health check.\n\nProject and task names have separate columns; full PROJECT--TASK IDs still work\nas command selectors. JSON retains its separate lifecycle/setup values and schemas.\nRetained logs and backups are reported separately by graftr history.\nUse --json for full task records, setup receipts, dependency results and timings.\nGlobal JSON also includes retained-history details.\nCleanup summaries never include recorded argv or environment context.\nInvalid record files produce an incomplete report with validated rows and exit 1.\nJSON uses outcome partial and data.recordIssues; file contents are never echoed.\nPreserve damaged records and their leases; status never repairs or deletes them.",
       "options": [
+        [
+          "--all",
+          "Show all managed worktrees and frozen/recovery records, regardless of the current directory."
+        ],
+        [
+          "--project PROJECT",
+          "Restrict target selection to this managed project."
+        ],
         [
           "--json",
           "Print a versioned result envelope; see graftr help output."
@@ -632,7 +661,7 @@
           "Show help for this command."
         ]
       ],
-      "targetNote": null
+      "targetNote": "TARGET accepts the existing exact name/branch/path/ID selectors; --project scopes\nselection, not the overview. Frozen tasks can also be selected explicitly.\n@ explicitly requests the current managed directory and fails outside one.\nSelection never contacts Herdr. --all cannot combine with TARGET or --project.\n\nFocused reports omit unrelated records and retained history; JSON keeps the same\narrays, with retained empty. Use --all --json for a cwd-independent global report.\nRecord validation warnings remain report-wide, even when focused.\nSee 'graftr help targeting' for target matching rules."
     },
     "history": {
       "summary": "Summarize retained logs, backups and other historical state",

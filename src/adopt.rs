@@ -1,6 +1,11 @@
 use crate::{
-    checkout::string, doctor, envdoc, envrefresh, health, herdr, hooks, human, locks, logs,
-    paths::Paths, profiles, progress::Progress, records, stateio, system, targets, terminal,
+    addresses,
+    checkout::string,
+    doctor, envdoc, envrefresh, health, herdr, hooks, human, locks, logs,
+    paths::{self, Paths},
+    profiles,
+    progress::Progress,
+    records, setup, stateio, system, targets, terminal,
     validation::*,
 };
 use serde_json::{Value, json};
@@ -15,6 +20,192 @@ pub struct Options {
     pub apply: bool,
     pub baseline: Vec<String>,
     pub hooks: Vec<String>,
+}
+pub enum ProvisionResult {
+    Preview(Value),
+    Setup(setup::SetupResult),
+}
+
+/// Explicit ownership transfer for migrated, addressless checkouts. Existing
+/// environments, attachments and manual addresses must never be silently claimed.
+pub fn provision(
+    paths: &Paths,
+    directory: Option<&str>,
+    project: Option<&str>,
+    dry_run: bool,
+    progress: &Progress,
+) -> Result<ProvisionResult> {
+    ensure(
+        !herdr::in_plugin_action(),
+        "Provision adoption from a checkout terminal, not a Herdr plugin action",
+    )?;
+    let cwd = env::current_dir().map_err(|_| Error::from("Current directory is unavailable"))?;
+    let requested = targets::resolve_path(&cwd, directory.unwrap_or("."))?;
+    let initial = doctor::adopted_checkout(&requested.to_string_lossy())?;
+    let (project_name, settings) = profiles::for_repo(paths, string(&initial, "repo"))?
+        .ok_or("Configure exactly one matching project profile before provisioning")?;
+    if let Some(project) = project {
+        name(project)?;
+        ensure(
+            project == project_name,
+            "The adopted worktree belongs to another project",
+        )?;
+    }
+    let record = records::adoptions(&paths.state)?.into_iter()
+        .find(|record| record.value()["path"] == initial["path"])
+        .ok_or("Provisioning requires an existing adopted worktree; use setup/open for an already managed task")?
+        .value().clone();
+    let adoption = Adoption {
+        paths,
+        initial,
+        project: project_name,
+        settings,
+        expected: Some(record.clone()),
+        record,
+        progress,
+    };
+    let engine = setup::Engine { paths, progress };
+    // Preview is entirely read-only. Apply takes the checkout lock before the
+    // registry lock, as explicit adoption stages do, and revalidates everything.
+    let tree_lock = if dry_run {
+        None
+    } else {
+        Some(locks::worktree(
+            paths,
+            string(&adoption.record, "path"),
+            true,
+        )?)
+    };
+    let state_lock = if dry_run {
+        None
+    } else {
+        Some(locks::state(paths)?)
+    };
+    adoption.verify()?;
+    let record = &adoption.record;
+    ensure(
+        record["localPort"].is_null() && record["url"].is_null(),
+        "This adoption has a manual address; provisioning will not take over or reassign it",
+    )?;
+    ensure(
+        record["socket"].is_null() && record["workspaceId"].is_null(),
+        "This adoption has an external Herdr attachment; review it before transferring lifecycle ownership",
+    )?;
+    ensure(
+        record["environment"] == "external"
+            && record["dependencies"] == "external"
+            && record["hooks"].as_array().unwrap().is_empty(),
+        "Selected adoption stages require review before provisioning; their effects were preserved",
+    )?;
+    let path = string(record, "path");
+    ensure(
+        !records::setups(&paths.state)?
+            .iter()
+            .any(|receipt| receipt.value()["path"] == path),
+        "Existing setup receipts require review before transferring adoption ownership",
+    )?;
+    ensure(
+        !paths::exists(&Path::new(path).join(".env"))?,
+        "Existing .env preserved; provisioning only supports checkouts without a manual environment",
+    )?;
+    ensure(
+        system::git(Path::new(path), &["ls-files", "-z", "--", ".env"])?.is_empty(),
+        "Repository tracks .env; refusing to provision credentials",
+    )?;
+    let profile = engine.profile(&adoption.project)?;
+    if let Some(source) = profile["envSource"].as_str() {
+        envrefresh::read_environment(source)?;
+        ensure(
+            system::run(
+                &["git", "-C", path, "check-ignore", "-q", "--", ".env"],
+                None,
+                false,
+            )?
+            .exit_code
+                == 0,
+            "The checkout must ignore .env before provisioning a private environment",
+        )?;
+    }
+    let mut task = json!({"schemaVersion":4,"id":record["id"],"project":record["project"],"repo":record["repo"],"path":path,"branch":record["branch"],
+        "baseCommit":system::git(Path::new(path), &["rev-parse","HEAD"] )?,"socket":null,"workspaceId":null,"tabs":{},"status":"preparing"});
+    for (key, value) in addresses::allocate(paths, &profile, &task)?
+        .as_object()
+        .unwrap()
+    {
+        task[key] = value.clone();
+    }
+    let (templates, assignments) = setup::configuration(&profile, &task)?;
+    task["envOverrides"] = templates;
+    task["overrides"] = assignments;
+    let task = records::Task::parse(&task)?;
+    let task = task.value();
+    if dry_run {
+        return Ok(ProvisionResult::Preview(
+            json!({"status":"preview","id":task["id"],"path":path,"branch":task["branch"],"localPort":task["localPort"],"httpsPort":task["httpsPort"],"url":task["url"],"ports":task.get("ports"),"standalone":true}),
+        ));
+    }
+    adoption.verify()?;
+    ensure(
+        !paths::exists(&Path::new(path).join(".env"))?,
+        "Environment appeared during provisioning; existing files preserved",
+    )?;
+    let backup_root = paths.state.join("migration-backups");
+    locks::private_directory(&backup_root)?;
+    let backup = backup_root.join(format!(
+        "adoption-{}-{}.json",
+        string(record, "id"),
+        system::uuid()?
+    ));
+    let adoption_file = paths
+        .state
+        .join("adopted")
+        .join(format!("{}.json", string(record, "id")));
+    let original = records::read_private(&adoption_file)?;
+    progress.run("backup-adoption", string(record, "id"), || {
+        stateio::atomic_write(&backup, &original, true)
+    })?;
+    let receipt = json!({"schemaVersion":1,"socket":null,"workspaceId":null,"path":path,"project":record["project"],"taskId":record["id"],"status":"incomplete","step":"enrollment", "message":"Adoption ownership transferred; run graftr setup --no-herdr if provisioning was interrupted.","installKey":null,"dependencies":"not-configured","skipInstall":false,"runId":null});
+    progress.run("save-setup", string(record, "id"), || {
+        stateio::write_setup(paths, &receipt)
+    })?;
+    engine.save_task(task)?;
+    // Never create an unowned gap: the durable managed record and receipt precede
+    // removal of external tracking. On interruption both records remain fail-closed.
+    progress.run("provision-adoption", string(record,"id"), || {
+        let directory = paths.state.join("adopted");
+        std::fs::remove_file(&adoption_file)
+            .map_err(|_| Error::from("Ownership transfer interrupted; preserve both records and the migration backup for review"))?;
+        stateio::sync_directory(&directory)
+    })?;
+    drop(state_lock);
+    drop(tree_lock);
+    engine
+        .open(
+            string(record, "id"),
+            &setup::Options {
+                no_herdr: true,
+                wait: true,
+                ..Default::default()
+            },
+        )
+        .map(ProvisionResult::Setup)
+}
+
+pub fn format_provision_preview(report: &Value, columns: usize) -> String {
+    human::fields(
+        &format!("{}: provision preview", string(report, "id")),
+        &[
+            ("Path", Some(string(report, "path").into())),
+            ("Branch", Some(string(report, "branch").into())),
+            ("Local port", Some(report["localPort"].to_string())),
+            ("URL", report["url"].as_str().map(str::to_owned)),
+        ],
+        Some(
+            "Read-only preview; ports are not reserved. Omit --dry-run to transfer ownership and run the approved setup synchronously. No Herdr workspace is changed; attach later with graftr open.",
+        ),
+        "preview",
+        columns,
+    )
 }
 pub fn ports(record: &Value) -> Vec<f64> {
     let mut ports = Vec::new();
